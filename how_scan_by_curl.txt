@@ -1,0 +1,107 @@
+🔐 STEP 1: GET YOUR TOKEN (Copy & Paste)
+Option A: Windows Command Prompt
+cmd
+curl -X POST "http://localhost:5000/api/auth/login" -H "Content-Type: application/json" -d "{\"email\":\"admin@detrack.com\",\"password\":\"Admin123!\"}"
+Option B: Mac / Linux / Git Bash
+bash
+curl -X POST "http://localhost:5000/api/auth/login" -H "Content-Type: application/json" -d '{"email":"admin@detrack.com","password":"Admin123!"}'
+📋 WHAT YOU WILL SEE (Response)
+json
+{
+  "success": true,
+  "message": "Login successful",
+  "user": {
+    "id": 1,
+    "email": "admin@detrack.com",
+    "firstName": "System",
+    "lastName": "Admin",
+    "role": "admin"
+  },
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsImVtYWlsIjoiYWRtaW5AZGV0cmFjay5jb20iLCJyb2xlIjoiYWRtaW4iLCJpYXQiOjE3ODYwMjA0OTksImV4cCI6MTc4NjYyNTI5OX0.Fe_EYHCEWyU1qxrGiMvRXO7u2DAQ1mjNywHd4Nu8uD4"
+}
+🔑 YOUR TOKEN (Copy This)
+text
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsImVtYWlsIjoiYWRtaW5AZGV0cmFjay5jb20iLCJyb2xlIjoiYWRtaW4iLCJpYXQiOjE3ODYwMjA0OTksImV4cCI6MTc4NjYyNTI5OX0.Fe_EYHCEWyU1qxrGiMvRXO7u2DAQ1mjNywHd4Nu8uD4
+🎯 ALL COMMANDS (Copy & Paste Ready)
+⚠️ IMPORTANT: Replace YOUR_TOKEN_HERE with the token above
+1️⃣ SCAN BOX 01
+Windows CMD:
+
+cmd
+curl -X POST "http://localhost:5000/api/scan-box" -H "Authorization: Bearer YOUR_TOKEN_HERE" -H "Content-Type: application/json" -d "{\"do_number\":\"RTTS5706\",\"barcode\":\"RTTS5706-01\",\"location\":\"Warehouse\"}"
+Mac/Linux/Git Bash:
+
+bash
+curl -X POST "http://localhost:5000/api/scan-box" -H "Authorization: Bearer YOUR_TOKEN_HERE" -H "Content-Type: application/json" -d '{"do_number":"RTTS5706","barcode":"RTTS5706-01","location":"Warehouse"}'
+2️⃣ SCAN BOX 02
+Windows CMD:
+
+cmd
+curl -X POST "http://localhost:5000/api/scan-box" -H "Authorization: Bearer YOUR_TOKEN_HERE" -H "Content-Type: application/json" -d "{\"do_number\":\"RTTS5706\",\"barcode\":\"RTTS5706-02\",\"location\":\"Warehouse\"}"
+Mac/Linux/Git Bash:
+
+bash
+curl -X POST "http://localhost:5000/api/scan-box" -H "Authorization: Bearer YOUR_TOKEN_HERE" -H "Content-Type: application/json" -d '{"do_number":"RTTS5706","barcode":"RTTS5706-02","location":"Warehouse"}'
+3️⃣ SCAN BOX 03
+Windows CMD:
+
+cmd
+curl -X POST "http://localhost:5000/api/scan-box" -H "Authorization: Bearer YOUR_TOKEN_HERE" -H "Content-Type: application/json" -d "{\"do_number\":\"RTTS5706\",\"barcode\":\"RTTS5706-03\",\"location\":\"Warehouse\"}"
+Mac/Linux/Git Bash:
+
+bash
+curl -X POST "http://localhost:5000/api/scan-box" -H "Authorization: Bearer YOUR_TOKEN_HERE" -H "Content-Type: application/json" -d '{"do_number":"RTTS5706","barcode":"RTTS5706-03","location":"Warehouse"}'
+4️⃣ SCAN BOX 04
+Windows CMD:
+
+cmd
+curl -X POST "http://localhost:5000/api/scan-box" -H "Authorization: Bearer YOUR_TOKEN_HERE" -H "Content-Type: application/json" -d "{\"do_number\":\"RTTS5706\",\"barcode\":\"RTTS5706-04\",\"location\":\"Warehouse\"}"
+Mac/Linux/Git Bash:
+
+bash
+curl -X POST "http://localhost:5000/api/scan-box" -H "Authorization: Bearer YOUR_TOKEN_HERE" -H "Content-Type: application/json" -d '{"do_number":"RTTS5706","barcode":"RTTS5706-04","location":"Warehouse"}'
+5️⃣ SCAN BOX 05
+Windows CMD:
+
+cmd
+curl -X POST "http://localhost:5000/api/scan-box" -H "Authorization: Bearer YOUR_TOKEN_HERE" -H "Content-Type: application/json" -d "{\"do_number\":\"RTTS5706\",\"barcode\":\"RTTS5706-05\",\"location\":\"Warehouse\"}"
+Mac/Linux/Git Bash:
+
+bash
+curl -X POST "http://localhost:5000/api/scan-box" -H "Authorization: Bearer YOUR_TOKEN_HERE" -H "Content-Type: application/json" -d '{"do_number":"RTTS5706","barcode":"RTTS5706-05","location":"Warehouse"}'
+6️⃣ SCAN BOX 06
+Windows CMD:
+
+cmd
+curl -X POST "http://localhost:5000/api/scan-box" -H "Authorization: Bearer YOUR_TOKEN_HERE" -H "Content-Type: application/json" -d "{\"do_number\":\"RTTS5706\",\"barcode\":\"RTTS5706-06\",\"location\":\"Warehouse\"}"
+Mac/Linux/Git Bash:
+
+bash
+curl -X POST "http://localhost:5000/api/scan-box" -H "Authorization: Bearer YOUR_TOKEN_HERE" -H "Content-Type: application/json" -d '{"do_number":"RTTS5706","barcode":"RTTS5706-06","location":"Warehouse"}'
+7️⃣ SCAN BOX 07
+Windows CMD:
+
+cmd
+curl -X POST "http://localhost:5000/api/scan-box" -H "Authorization: Bearer YOUR_TOKEN_HERE" -H "Content-Type: application/json" -d "{\"do_number\":\"RTTS5706\",\"barcode\":\"RTTS5706-07\",\"location\":\"Warehouse\"}"
+Mac/Linux/Git Bash:
+
+bash
+curl -X POST "http://localhost:5000/api/scan-box" -H "Authorization: Bearer YOUR_TOKEN_HERE" -H "Content-Type: application/json" -d '{"do_number":"RTTS5706","barcode":"RTTS5706-07","location":"Warehouse"}'
+8️⃣ SCAN BOX 08
+Windows CMD:
+
+cmd
+curl -X POST "http://localhost:5000/api/scan-box" -H "Authorization: Bearer YOUR_TOKEN_HERE" -H "Content-Type: application/json" -d "{\"do_number\":\"RTTS5706\",\"barcode\":\"RTTS5706-08\",\"location\":\"Warehouse\"}"
+Mac/Linux/Git Bash:
+
+bash
+curl -X POST "http://localhost:5000/api/scan-box" -H "Authorization: Bearer YOUR_TOKEN_HERE" -H "Content-Type: application/json" -d '{"do_number":"RTTS5706","barcode":"RTTS5706-08","location":"Warehouse"}'
+9️⃣ CHECK BOX STATUS (See what's scanned)
+Windows CMD:
+
+cmd
+curl -X GET "http://localhost:5000/api/box-status/RTTS5706" -H "Authorization: Bearer YOUR_TOKEN_HERE"
+Mac/Linux/Git Bash:
+
+bash
+curl -X GET "http://localhost:5000/api/box-status/RTTS5706" -H "Authorization: Bearer YOUR_TOKEN_HERE"
