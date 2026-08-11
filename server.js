@@ -33,3 +33,4 @@ const server = app.listen(PORT, () => {
   console.log(`📁 Labels folder: ${__dirname}/uploads/labels`);
   console.log(`📁 Waiting for requests...`);
 });
+
