@@ -12,7 +12,8 @@ exports.getUsers = async (req, res) => {
       users: users.map(user => ({
         ...user,
         group_id: user.group_id || null,
-        group_name: user.group_name || null
+        group_name: user.group_name || null,
+        prefix: user.prefix || null  // 👈 ADD prefix
       }))
     });
   } catch (error) {
@@ -27,7 +28,10 @@ exports.getCustomers = async (req, res) => {
     const customers = await User.getAllCustomers();
     res.json({
       success: true,
-      customers
+      customers: customers.map(customer => ({
+        ...customer,
+        prefix: customer.prefix || null  // 👈 ADD prefix
+      }))
     });
   } catch (error) {
     console.error('❌ Get customers error:', error);
@@ -41,7 +45,10 @@ exports.getStaff = async (req, res) => {
     const staff = await User.getAllStaff();
     res.json({
       success: true,
-      staff
+      staff: staff.map(user => ({
+        ...user,
+        prefix: user.prefix || null  // 👈 ADD prefix
+      }))
     });
   } catch (error) {
     console.error('❌ Get staff error:', error);
@@ -52,7 +59,7 @@ exports.getStaff = async (req, res) => {
 // ===== ADMIN: CREATE STAFF/ADMIN ACCOUNT =====
 exports.createUser = async (req, res) => {
   try {
-    const { email, password, firstName, lastName, role, companyName, phone, address } = req.body;
+    const { email, password, firstName, lastName, role, companyName, phone, address, prefix } = req.body;
 
     if (!email || !password || !firstName || !lastName || !role) {
       return res.status(400).json({
@@ -83,15 +90,19 @@ exports.createUser = async (req, res) => {
       phone,
       address,
       groupId: null,
-      groupName: null
+      groupName: null,
+      prefix: prefix || null  // 👈 ADD prefix
     });
 
-    console.log(`✅ Admin created new user: ${newUser.email} (${newUser.role})`);
+    console.log(`✅ Admin created new user: ${newUser.email} (${newUser.role}) with prefix: ${newUser.prefix || 'none'}`);
 
     res.status(201).json({
       success: true,
       message: `User created successfully with role: ${role}`,
-      user: newUser
+      user: {
+        ...newUser,
+        prefix: newUser.prefix || null  // 👈 ADD prefix
+      }
     });
 
   } catch (error) {
@@ -109,8 +120,11 @@ exports.createCustomer = async (req, res) => {
     const { 
       email, password, firstName, lastName, 
       companyName, phone, address,
-      groupId, groupName
+      groupId, groupName,
+      prefix  // 👈 ADD prefix
     } = req.body;
+
+    console.log('📝 Creating customer with prefix:', prefix);
 
     if (!email || !password || !firstName || !lastName) {
       return res.status(400).json({
@@ -161,10 +175,11 @@ exports.createCustomer = async (req, res) => {
       phone,
       address,
       groupId,
-      groupName
+      groupName,
+      prefix: prefix || null  // 👈 ADD prefix
     });
 
-    console.log(`✅ Admin created customer: ${newUser.email} for group: ${groupName}`);
+    console.log(`✅ Admin created customer: ${newUser.email} for group: ${groupName} with prefix: ${newUser.prefix || 'none'}`);
 
     res.status(201).json({
       success: true,
@@ -177,7 +192,8 @@ exports.createCustomer = async (req, res) => {
         role: newUser.role,
         companyName: newUser.company_name,
         groupId: newUser.group_id,
-        groupName: newUser.group_name
+        groupName: newUser.group_name,
+        prefix: newUser.prefix || null  // 👈 ADD prefix
       }
     });
 
@@ -254,8 +270,6 @@ exports.updateUserRole = async (req, res) => {
   }
 };
 
-// src/controllers/adminController.js - Fix deleteUser
-
 // ===== ADMIN: DELETE USER =====
 exports.deleteUser = async (req, res) => {
   try {
@@ -276,7 +290,7 @@ exports.deleteUser = async (req, res) => {
     
     console.log(`✅ Found user: ${user.email} (${user.role})`);
 
-    // 👇 DELETE WITH CASCADE - Delete all related records first
+    // DELETE WITH CASCADE - Delete all related records first
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -344,6 +358,7 @@ exports.deleteUser = async (req, res) => {
     });
   }
 };
+
 // ===== ADMIN: CHECK IF GROUP HAS CUSTOMER =====
 exports.checkGroupCustomer = async (req, res) => {
   try {
@@ -366,7 +381,8 @@ exports.checkGroupCustomer = async (req, res) => {
           last_name: customer.last_name,
           name: `${customer.first_name} ${customer.last_name}`,
           company: customer.company_name,
-          status: customer.status
+          status: customer.status,
+          prefix: customer.prefix || null  // 👈 ADD prefix
         }
       });
     } else {
@@ -407,6 +423,7 @@ exports.getCustomerByGroup = async (req, res) => {
           name: `${customer.first_name} ${customer.last_name}`,
           company: customer.company_name,
           status: customer.status,
+          prefix: customer.prefix || null,  // 👈 ADD prefix
           created_at: customer.created_at,
           last_login: customer.last_login
         }
@@ -460,7 +477,8 @@ exports.getUserById = async (req, res) => {
       user: {
         ...user,
         group_id: user.group_id || null,
-        group_name: user.group_name || null
+        group_name: user.group_name || null,
+        prefix: user.prefix || null  // 👈 ADD prefix
       }
     });
   } catch (error) {

@@ -23,7 +23,16 @@ app.use('/api/uploads/labels', express.static(labelsDir));
 
 // ===== ROUTES =====
 app.use('/api', routes);
-
+app.use((req, res, next) => {
+  const authHeader = req.headers.authorization;
+  console.log('🔍 Request:', {
+    path: req.path,
+    method: req.method,
+    hasAuth: !!authHeader,
+    authPreview: authHeader ? authHeader.substring(0, 30) + '...' : 'None'
+  });
+  next();
+});
 // ===== HEALTH CHECK =====
 app.get('/api/health', (req, res) => {
   const { pool } = require('./config/database');

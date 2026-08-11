@@ -4,7 +4,7 @@ const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const { upload } = require('../middleware/upload');
 const jobController = require('../controllers/jobController');
-const collectionController = require('../controllers/collectionController'); // 👈 IMPORTANT
+const collectionController = require('../controllers/collectionController');
 
 // All routes require authentication
 router.use(authenticate);
@@ -17,13 +17,25 @@ router.get('/db-jobs/:id', jobController.getJob);
 router.post('/create-job', jobController.createJob);
 router.post('/upload-manifest', upload.single('file'), jobController.uploadManifest);
 
-// 👇 THIS ROUTE MUST EXIST - Collection upload
+// Collection upload
 router.post('/upload-collection-manifest', upload.single('file'), collectionController.uploadCollectionManifest);
+
+// 👇 Detrack API jobs with filters & pagination
+router.get('/detrack-jobs', jobController.getDetrackJobsWithFilters);
+
+// 👇 Fetch collections from Detrack
+router.get('/detrack-collections', jobController.getDetrackCollections);
 
 // Detrack API jobs
 router.get('/jobs', jobController.getDetrackJobs);
 router.get('/jobs/:id', jobController.getDetrackJob);
 router.get('/job-by-donumber', jobController.getJobByDoNumber);
+
+// Download POD
+router.get('/download-pod/:doNumber', jobController.downloadPod);
+
+// Generate POD
+router.get('/generate-pod/:doNumber', jobController.generatePod);
 
 // Box scanning routes
 router.get('/box-status/:do_number', jobController.getBoxStatus);

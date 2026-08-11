@@ -10,7 +10,8 @@ exports.register = async (req, res) => {
     const { 
       email, password, firstName, lastName, 
       companyName, companyType, phone, address,
-      groupId, groupName
+      groupId, groupName,
+      prefix  // 👈 ADD prefix
     } = req.body;
 
     if (!email || !password || !firstName || !lastName) {
@@ -40,7 +41,7 @@ exports.register = async (req, res) => {
       return res.status(409).json({ error: 'Email already registered' });
     }
 
-    // 🔥 CRITICAL: Check if this group already has a customer account
+    // CRITICAL: Check if this group already has a customer account
     const existingCustomer = await User.findCustomerByGroup(groupId);
     if (existingCustomer) {
       return res.status(409).json({ 
@@ -70,7 +71,8 @@ exports.register = async (req, res) => {
       phone,
       address,
       groupId,
-      groupName
+      groupName,
+      prefix: prefix || null  // 👈 ADD prefix
     });
 
     const token = jwt.sign(
@@ -79,7 +81,7 @@ exports.register = async (req, res) => {
       { expiresIn: JWT_EXPIRY }
     );
 
-    console.log(`✅ New customer registered: ${newUser.email} for group: ${groupName}`);
+    console.log(`✅ New customer registered: ${newUser.email} for group: ${groupName} with prefix: ${newUser.prefix || 'none'}`);
 
     res.status(201).json({
       success: true,
@@ -91,8 +93,9 @@ exports.register = async (req, res) => {
         lastName: newUser.last_name,
         role: newUser.role,
         companyName: newUser.company_name,
-        groupId: newUser.group_id,      // 👈 ADD THIS
-        groupName: newUser.group_name   // 👈 ADD THIS
+        groupId: newUser.group_id,
+        groupName: newUser.group_name,
+        prefix: newUser.prefix || null  // 👈 ADD prefix
       },
       token
     });
@@ -137,8 +140,13 @@ exports.login = async (req, res) => {
       { expiresIn: JWT_EXPIRY }
     );
 
-    console.log(`✅ User logged in: ${user.email} (${user.role})`);
-    console.log(`✅ User group: ${user.group_name} (${user.group_id})`); // 👈 ADD THIS LOG
+    console.log('✅ User logged in:', { 
+      email: user.email, 
+      role: user.role,
+      group_id: user.group_id,
+      group_name: user.group_name,
+      prefix: user.prefix  // 👈 ADD prefix
+    });
 
     res.json({
       success: true,
@@ -150,8 +158,9 @@ exports.login = async (req, res) => {
         lastName: user.last_name,
         role: user.role,
         companyName: user.company_name,
-        groupId: user.group_id,      // 👈 ADD THIS - Returns group_id
-        groupName: user.group_name   // 👈 ADD THIS - Returns group_name
+        groupId: user.group_id,
+        groupName: user.group_name,
+        prefix: user.prefix || null  // 👈 ADD prefix
       },
       token
     });
@@ -181,8 +190,9 @@ exports.getMe = async (req, res) => {
         lastName: user.last_name,
         role: user.role,
         companyName: user.company_name,
-        groupId: user.group_id,      // 👈 ADD THIS
-        groupName: user.group_name   // 👈 ADD THIS
+        groupId: user.group_id,
+        groupName: user.group_name,
+        prefix: user.prefix || null  // 👈 ADD prefix
       }
     });
   } catch (error) {
@@ -202,7 +212,8 @@ exports.adminCreateCustomer = async (req, res) => {
     const { 
       email, password, firstName, lastName, 
       companyName, phone, address,
-      groupId, groupName
+      groupId, groupName,
+      prefix  // 👈 ADD prefix
     } = req.body;
 
     // Only admin can create customers with groups
@@ -229,7 +240,7 @@ exports.adminCreateCustomer = async (req, res) => {
       return res.status(409).json({ error: 'Email already exists' });
     }
 
-    // 🔥 CRITICAL: Check if group already has a customer
+    // CRITICAL: Check if group already has a customer
     const existingCustomer = await User.findCustomerByGroup(groupId);
     if (existingCustomer) {
       return res.status(409).json({ 
@@ -259,10 +270,11 @@ exports.adminCreateCustomer = async (req, res) => {
       phone,
       address,
       groupId,
-      groupName
+      groupName,
+      prefix: prefix || null  // 👈 ADD prefix
     });
 
-    console.log(`✅ Admin created customer: ${newUser.email} for group: ${groupName}`);
+    console.log(`✅ Admin created customer: ${newUser.email} for group: ${groupName} with prefix: ${newUser.prefix || 'none'}`);
 
     res.status(201).json({
       success: true,
@@ -274,8 +286,9 @@ exports.adminCreateCustomer = async (req, res) => {
         lastName: newUser.last_name,
         role: newUser.role,
         companyName: newUser.company_name,
-        groupId: newUser.group_id,      // 👈 ADD THIS
-        groupName: newUser.group_name   // 👈 ADD THIS
+        groupId: newUser.group_id,
+        groupName: newUser.group_name,
+        prefix: newUser.prefix || null  // 👈 ADD prefix
       }
     });
 
@@ -291,7 +304,7 @@ exports.adminCreateCustomer = async (req, res) => {
 // ===== ADMIN: CREATE STAFF/ADMIN =====
 exports.adminCreateStaff = async (req, res) => {
   try {
-    const { email, password, firstName, lastName, role, companyName, phone, address } = req.body;
+    const { email, password, firstName, lastName, role, companyName, phone, address, prefix } = req.body;
 
     if (!email || !password || !firstName || !lastName || !role) {
       return res.status(400).json({
@@ -322,10 +335,11 @@ exports.adminCreateStaff = async (req, res) => {
       phone,
       address,
       groupId: null,
-      groupName: null
+      groupName: null,
+      prefix: prefix || null  // 👈 ADD prefix
     });
 
-    console.log(`✅ Admin created staff: ${newUser.email} (${newUser.role})`);
+    console.log(`✅ Admin created staff: ${newUser.email} (${newUser.role}) with prefix: ${newUser.prefix || 'none'}`);
 
     res.status(201).json({
       success: true,
@@ -337,8 +351,9 @@ exports.adminCreateStaff = async (req, res) => {
         lastName: newUser.last_name,
         role: newUser.role,
         companyName: newUser.company_name,
-        groupId: null,      // 👈 ADD THIS (staff/admin don't have groups)
-        groupName: null     // 👈 ADD THIS
+        groupId: null,
+        groupName: null,
+        prefix: newUser.prefix || null  // 👈 ADD prefix
       }
     });
 

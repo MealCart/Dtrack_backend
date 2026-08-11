@@ -1,11 +1,182 @@
 // src/controllers/jobController.js
 const xlsx = require('xlsx');
 const fs = require('fs');
+const axios = require('axios');
 const { pool } = require('../config/database');
 const Job = require('../models/Job');
 const DetrackService = require('../services/detrackService');
 const { getValue, getNumber, getValidDate, generateBarcodes, V2_VALID_FIELDS } = require('../utils/helpers');
-const Collection = require('../models/Collection');  // 👈 ADD THIS - Required for collection uploads
+const Collection = require('../models/Collection');
+const PODService = require('../services/podService');
+
+// ===== HELPER: MAP DETRACK JOB TO FRONTEND FORMAT =====
+function mapDetrackJobToBooking(job) {
+  const doNumber = job.do_number || job.id || 'N/A';
+  const shippingLabels = job.number_of_shipping_labels || job.cartons || job.boxes || 1;
+
+  let barcodes = job.barcodes || [];
+  if (typeof barcodes === 'string') {
+    try {
+      barcodes = JSON.parse(barcodes);
+    } catch (e) {
+      barcodes = [];
+    }
+  }
+
+  if (barcodes.length === 0) {
+    for (let i = 0; i < shippingLabels; i++) {
+      barcodes.push(doNumber + '-' + String(i + 1).padStart(2, '0'));
+    }
+  }
+
+  let scans = job.scans || [];
+  if (typeof scans === 'string') {
+    try {
+      scans = JSON.parse(scans);
+    } catch (e) {
+      scans = [];
+    }
+  }
+
+  const statusMap = {
+    'pending': 'pending',
+    'ready': 'ready',
+    'in_transit': 'in_transit',
+    'delivered': 'delivered',
+    'failed': 'failed',
+    'dispatched': 'dispatched',
+    'completed': 'completed'
+  };
+  const mappedStatus = statusMap[job.status?.toLowerCase()] || 'pending';
+
+  return {
+    id: job.id || doNumber,
+    reference: doNumber,
+    type: job.type || 'delivery',
+    source: job.source || 'detrack',
+    customerName: job.deliver_to_collect_from || job.deliver_to || 'Unknown',
+    customerCompany: job.company_name || '',
+    customerEmail: job.notify_email || '',
+    pickupAddress: '',
+    deliveryAddress: job.address || '',
+    postcode: job.postal_code || '',
+    recipientName: job.deliver_to_collect_from || job.deliver_to || 'Unknown',
+    recipientPhone: job.phone || job.phone_number || '',
+    boxes: shippingLabels,
+    number_of_shipping_labels: shippingLabels,
+    weight: job.weight || 0,
+    contents: job.contents || job.note || '',
+    status: mappedStatus,
+    assignedVehicleId: job.assign_to || null,
+    createdAt: job.created_at || new Date().toISOString(),
+    scheduledDate: job.date || new Date().toISOString().split('T')[0],
+    deliveredDate: job.delivered_date || undefined,
+    cost: job.job_fee || 0,
+    specialInstructions: job.instructions || '',
+    barcodes: barcodes,
+    scans: scans,
+    labelUrl: job.label_url || job.labelUrl || '',
+    detrackId: job.id || '',
+    groupName: job.group_name || '',
+    groupId: job.group_id || '',
+    runNumber: job.run_number || '',
+    podTime: job.pod_time || '',
+    trackingLink: job.tracking_link || '',
+    verificationCode: job.verification_code || '',
+    updatedAt: job.updated_at || job.created_at || new Date().toISOString(),
+    primaryJobStatus: job.primary_job_status || '',
+    trackingStatus: job.tracking_status || '',
+    trackingStatusCode: job.tracking_status_code || '',
+    driver: job.assign_to || '',
+    liveEta: job.live_eta || null,
+    etaTime: job.eta_time || null,
+    podFileUrl: job.pod_file_url || job.pod_url || null,
+    photos: {
+      photo_1: job.photo_1_file_url,
+      photo_2: job.photo_2_file_url,
+      photo_3: job.photo_3_file_url,
+      photo_4: job.photo_4_file_url,
+      photo_5: job.photo_5_file_url,
+      photo_6: job.photo_6_file_url,
+      photo_7: job.photo_7_file_url,
+      photo_8: job.photo_8_file_url,
+      photo_9: job.photo_9_file_url,
+      photo_10: job.photo_10_file_url
+    },
+    milestones: job.milestones || [],
+    cartons: job.cartons || shippingLabels
+  };
+}
+
+// ===== GENERATE POD PDF =====
+exports.generatePod = async (req, res) => {
+  try {
+    const { doNumber } = req.params;
+
+    if (!doNumber) {
+      return res.status(400).json({ error: 'DO number is required' });
+    }
+
+    console.log(`📄 Generating POD for DO: ${doNumber}`);
+
+    const job = await DetrackService.getJobByDoNumber(doNumber);
+
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    if (job.status !== 'completed' && job.status !== 'delivered') {
+      return res.status(400).json({
+        error: 'POD not available',
+        message: 'Job is not completed yet. POD is only available for completed jobs.'
+      });
+    }
+
+    const photos = [
+      job.photo_1_file_url,
+      job.photo_2_file_url,
+      job.photo_3_file_url,
+      job.photo_4_file_url,
+      job.photo_5_file_url,
+      job.photo_6_file_url,
+      job.photo_7_file_url,
+      job.photo_8_file_url,
+      job.photo_9_file_url,
+      job.photo_10_file_url
+    ].filter(url => url && url !== null && url !== '');
+
+    console.log(`📸 Found ${photos.length} photos`);
+    console.log(`📄 Generating PDF with job data:`, {
+      do_number: job.do_number,
+      status: job.status,
+      recipient: job.deliver_to_collect_from || job.deliver_to,
+      hasPhotos: photos.length > 0
+    });
+
+    const pdfDoc = await PODService.generatePOD(job, photos);
+    const pdfBytes = await pdfDoc.save();
+    
+    console.log(`📄 PDF size: ${pdfBytes.length} bytes`);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="POD_${doNumber}.pdf"`);
+    res.setHeader('Content-Length', pdfBytes.length);
+    res.setHeader('Cache-Control', 'no-cache');
+    res.send(Buffer.from(pdfBytes));
+
+    console.log(`✅ POD generated for ${doNumber}`);
+
+  } catch (error) {
+    console.error('❌ Generate POD error:', error.message);
+    console.error('❌ Stack:', error.stack);
+    res.status(500).json({
+      error: 'Failed to generate POD',
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
 // ===== FETCH JOBS FROM DATABASE (WITH GROUP FILTERING) =====
 exports.getJobs = async (req, res) => {
   try {
@@ -13,10 +184,9 @@ exports.getJobs = async (req, res) => {
     const userId = req.user.id;
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
-    
+
     let jobs;
-    
-    // If admin or staff, get ALL jobs (no user filter)
+
     if (userRole === 'admin' || userRole === 'staff') {
       if (date) {
         const query = 'SELECT * FROM jobs WHERE scheduled_date = $1 ORDER BY created_at DESC';
@@ -29,7 +199,6 @@ exports.getJobs = async (req, res) => {
       }
       console.log(`✅ Admin/Staff fetched ${jobs.length} jobs (all users)`);
     } else {
-      // Customer - only their group's jobs
       if (userGroupId) {
         const query = `
           SELECT j.*, u.group_name as customer_group_name 
@@ -42,12 +211,11 @@ exports.getJobs = async (req, res) => {
         jobs = result.rows;
         console.log(`✅ Customer fetched ${jobs.length} jobs for group: ${userGroupId}`);
       } else {
-        // Fallback: get jobs created by this user
         jobs = await Job.findAll(userId, date);
         console.log(`✅ Customer fetched ${jobs.length} jobs for user ${userId}`);
       }
     }
-    
+
     return res.json({
       success: true,
       data: jobs
@@ -68,29 +236,26 @@ exports.getJob = async (req, res) => {
     const userId = req.user.id;
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
-    
+
     let job;
-    
-    // If admin or staff, get any job by id
+
     if (userRole === 'admin' || userRole === 'staff') {
       const query = 'SELECT * FROM jobs WHERE id = $1 OR do_number = $1';
       const result = await pool.query(query, [id]);
       job = result.rows[0];
     } else {
-      // Customer - only if job belongs to their group
       const query = `
         SELECT j.* FROM jobs j
         WHERE (j.id = $1 OR j.do_number = $1) AND j.group_id = $2
       `;
       const result = await pool.query(query, [id, userGroupId]);
       job = result.rows[0];
-      
-      // Fallback: check if user created it
+
       if (!job) {
         job = await Job.findById(userId, id);
       }
     }
-    
+
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
     }
@@ -138,7 +303,7 @@ exports.createJob = async (req, res) => {
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
     const userGroupName = req.user.group_name;
-    
+
     console.log(`📦 Creating single job in Detrack for user ${userId}...`);
 
     const requiredFields = ['do_number', 'address', 'deliver_to'];
@@ -150,17 +315,15 @@ exports.createJob = async (req, res) => {
       }
     }
 
-    // If user is customer, use their group_id automatically
     let groupId = jobData.group_id || '';
     let groupName = jobData.group || '';
-    
+
     if (userRole === 'customer' && userGroupId) {
       groupId = userGroupId;
       groupName = userGroupName || '';
       console.log(`🔒 Customer forced to use group: ${groupId}`);
     }
 
-    // Pass group_id to Detrack service
     const detrackPayload = {
       do_number: jobData.do_number,
       address: jobData.address,
@@ -269,17 +432,105 @@ exports.createJob = async (req, res) => {
   }
 };
 
+// ===== FETCH COLLECTIONS FROM DETRACK API =====
+exports.getDetrackCollections = async (req, res) => {
+  try {
+    const { date, groupId, page, limit } = req.query;
+    const userRole = req.user.role;
+    const userGroupId = req.user.group_id;
+
+    console.log('📡 Fetching Detrack collections with filters:', { 
+      date, 
+      groupId, 
+      page, 
+      limit, 
+      role: userRole,
+      userGroupId: userGroupId
+    });
+
+    // 👇 ALWAYS fetch from Detrack with type=Collection
+    const queryParams = {
+      type: 'Collection'
+    };
+
+    if (date) {
+      queryParams.date = date;
+    }
+    
+    if (page) {
+      queryParams.page = parseInt(page);
+    }
+    if (limit) {
+      queryParams.limit = parseInt(limit);
+    }
+
+    // 👇 Do NOT send group_id to Detrack (it doesn't work)
+    // Instead, we will filter on the backend
+
+    console.log('📤 Fetching all collections from Detrack (will filter by group on backend)');
+
+    const response = await DetrackService.getJobsWithFilters(queryParams);
+
+    let mappedCollections = response?.data?.map(function(job) {
+      return mapDetrackJobToBooking(job);
+    }) || [];
+
+    mappedCollections.forEach(function(collection) {
+      collection.type = 'collection';
+    });
+
+    // 👇 FILTER ON BACKEND BASED ON USER ROLE
+    const targetGroupId = userRole === 'customer' ? userGroupId : (groupId || null);
+
+    if (targetGroupId) {
+      const beforeFilter = mappedCollections.length;
+      mappedCollections = mappedCollections.filter(function(collection) {
+        return collection.groupId === targetGroupId || collection.group_id === targetGroupId;
+      });
+      console.log(`🔒 Filtered ${beforeFilter} collections to ${mappedCollections.length} collections for group: ${targetGroupId}`);
+    } else {
+      console.log('👑 Showing ALL collections (admin/staff)');
+    }
+
+    console.log('✅ Fetched ' + mappedCollections.length + ' collections from Detrack');
+
+    return res.json({
+      success: true,
+      data: mappedCollections,
+      source: 'detrack',
+      meta: {
+        total: mappedCollections.length,
+        page: queryParams.page || 1,
+        limit: queryParams.limit || 25,
+        hasNext: response?.links?.next !== null && mappedCollections.length === (queryParams.limit || 25),
+        nextPage: response?.links?.next || null,
+        date: date,
+        groupId: targetGroupId,
+        role: userRole
+      },
+      links: response?.links || null
+    });
+
+  } catch (error) {
+    console.error('❌ Fetch Detrack collections error:', error.message);
+    return res.status(500).json({
+      error: 'Failed to fetch collections from Detrack',
+      details: error.response?.data?.message || error.message
+    });
+  }
+};
+
+// ===== UPLOAD MANIFEST =====
 exports.uploadManifest = async (req, res) => {
   try {
     const userId = req.user.id;
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
     const userGroupName = req.user.group_name;
-    
-    // 👇 Get group_id from request body (for admin/staff selector)
+
     const selectedGroupId = req.body.groupId || '';
     const selectedGroupName = req.body.groupName || '';
-    
+
     console.log(`📁 File upload received from user ${userId}`);
     console.log('📄 File name:', req.file.originalname);
     console.log('📏 File size:', req.file.size, 'bytes');
@@ -310,14 +561,14 @@ exports.uploadManifest = async (req, res) => {
       return res.status(400).json({ error: 'No header row found in Excel file' });
     }
 
-    const headers = rawData[headerRowIndex].map(function(h) { return h?.toString().trim() || ''; });
+    const headers = rawData[headerRowIndex].map(function (h) { return h?.toString().trim() || ''; });
     const dataRows = [];
 
     for (let i = dataStartIndex; i < rawData.length; i++) {
       const row = rawData[i];
-      if (!row || row.every(function(cell) { return !cell || cell === ''; })) continue;
+      if (!row || row.every(function (cell) { return !cell || cell === ''; })) continue;
       const obj = {};
-      headers.forEach(function(header, idx) {
+      headers.forEach(function (header, idx) {
         obj[header.trim()] = row[idx] || '';
       });
       dataRows.push(obj);
@@ -325,14 +576,12 @@ exports.uploadManifest = async (req, res) => {
 
     const validRows = [];
     const errors = [];
-
-    // First pass: Validate rows and collect DO numbers
     const doNumbers = [];
 
     for (let i = 0; i < dataRows.length; i++) {
       const row = dataRows[i];
       const rowErrors = [];
-      const hasData = Object.values(row).some(function(v) { return v && v !== ''; });
+      const hasData = Object.values(row).some(function (v) { return v && v !== ''; });
       if (!hasData) continue;
 
       const doNumber = getValue(row, 'D.O. No.', 'Tracking No.', 'DO No');
@@ -360,11 +609,10 @@ exports.uploadManifest = async (req, res) => {
       });
     }
 
-    // ===== CHECK FOR DUPLICATE DO NUMBERS IN DATABASE =====
     console.log('🔍 Checking for duplicate DO numbers in database...');
     const duplicateCheck = await Job.checkDoNumbersExists(doNumbers);
     const duplicateDoNumbers = Object.keys(duplicateCheck).filter(key => duplicateCheck[key] === true);
-    
+
     if (duplicateDoNumbers.length > 0) {
       console.log(`❌ Found ${duplicateDoNumbers.length} duplicate DO numbers:`, duplicateDoNumbers);
       return res.status(409).json({
@@ -395,18 +643,15 @@ exports.uploadManifest = async (req, res) => {
       const cartons = getNumber(row, 'Cartons', 'No. of Shipping Labels');
       const boxes = noOfShippingLabels || cartons || 1;
 
-      // 👇 Determine group_id: from Excel, or from request body, or from user's group
       let groupId = getValue(row, 'Group ID', 'Group Id', 'GroupID', 'group_id');
       let groupName = getValue(row, 'Group Name', 'Group', 'group_name', 'group');
-      
-      // If group_id is not in Excel, use the selected group from request (admin/staff selector)
+
       if (!groupId && selectedGroupId) {
         groupId = selectedGroupId;
         groupName = selectedGroupName;
         console.log(`📌 Using selected group ID from request: ${groupId}`);
       }
-      
-      // If still no group, use user's group (for customers)
+
       if (!groupId && userRole === 'customer' && userGroupId) {
         groupId = userGroupId;
         groupName = userGroupName || '';
@@ -541,17 +786,183 @@ exports.uploadManifest = async (req, res) => {
   }
 };
 
+
+
+// ===== FETCH JOBS FROM DETRACK API WITH FILTERS & PAGINATION =====
+exports.getDetrackJobsWithFilters = async (req, res) => {
+  try {
+    const { date, groupId, page, limit } = req.query;
+    const userRole = req.user.role;
+    const userGroupId = req.user.group_id;
+
+    console.log('📡 Fetching Detrack jobs with filters:', { 
+      date, 
+      groupId, 
+      page, 
+      limit, 
+      role: userRole,
+      userGroupId: userGroupId
+    });
+
+    // 👇 ALWAYS fetch from Detrack with type=Delivery
+    const queryParams = {
+      type: 'Delivery'
+    };
+
+    if (date) {
+      queryParams.date = date;
+    }
+    
+    if (page) {
+      queryParams.page = parseInt(page);
+    }
+    
+    // 👇 Set default limit to 50 if not provided
+    const effectiveLimit = limit ? parseInt(limit) : 150;
+    queryParams.limit = effectiveLimit;
+
+    // 👇 Do NOT send group_id to Detrack (it doesn't work)
+    // Instead, we will filter on the backend
+
+    console.log('📤 Fetching all deliveries from Detrack (will filter by group on backend)');
+
+    const response = await DetrackService.getJobsWithFilters(queryParams);
+
+    let mappedJobs = response?.data?.map(function(job) {
+      return mapDetrackJobToBooking(job);
+    }) || [];
+
+    // 👇 FILTER ON BACKEND BASED ON USER ROLE
+    const targetGroupId = userRole === 'customer' ? userGroupId : (groupId || null);
+
+    if (targetGroupId) {
+      const beforeFilter = mappedJobs.length;
+      mappedJobs = mappedJobs.filter(function(job) {
+        return job.groupId === targetGroupId || job.group_id === targetGroupId;
+      });
+      console.log(`🔒 Filtered ${beforeFilter} jobs to ${mappedJobs.length} jobs for group: ${targetGroupId}`);
+    } else {
+      console.log('👑 Showing ALL jobs (admin/staff)');
+    }
+
+    console.log('✅ Fetched ' + mappedJobs.length + ' jobs from Detrack');
+
+    return res.json({
+      success: true,
+      data: mappedJobs,
+      source: 'detrack',
+      meta: {
+        total: mappedJobs.length,
+        page: queryParams.page || 1,
+        limit: effectiveLimit,
+        hasNext: response?.links?.next !== null && mappedJobs.length === effectiveLimit,
+        nextPage: response?.links?.next || null,
+        date: date,
+        groupId: targetGroupId,
+        role: userRole
+      },
+      links: response?.links || null
+    });
+
+  } catch (error) {
+    console.error('❌ Fetch Detrack jobs error:', error.message);
+    return res.status(500).json({
+      error: 'Failed to fetch jobs from Detrack',
+      details: error.response?.data?.message || error.message
+    });
+  }
+};
+
+// ===== DOWNLOAD POD FOR A JOB =====
+exports.downloadPod = async (req, res) => {
+  try {
+    const { doNumber } = req.params;
+
+    if (!doNumber) {
+      return res.status(400).json({ error: 'DO number is required' });
+    }
+
+    console.log(`📄 Downloading POD for DO: ${doNumber}`);
+
+    const job = await DetrackService.getJobByDoNumber(doNumber);
+
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    if (job.status !== 'completed' && job.status !== 'delivered') {
+      return res.status(400).json({
+        error: 'POD not available',
+        message: 'Job is not completed yet. POD is only available for completed jobs.'
+      });
+    }
+
+    const jobId = job.id || job._id;
+    
+    if (!jobId) {
+      return res.status(404).json({
+        error: 'Job ID not found',
+        message: 'Could not find job ID for this job.'
+      });
+    }
+
+    console.log(`📄 Job ID: ${jobId}`);
+
+    const podUrl = `https://app.detrack.com/api/v2/jobs/export/${jobId}.pdf`;
+    
+    console.log(`📄 POD URL: ${podUrl}`);
+
+    const response = await axios.get(podUrl, {
+      responseType: 'arraybuffer',
+      headers: {
+        'X-API-KEY': process.env.DETRACK_API_KEY,
+        'User-Agent': 'curl/7.68.0'
+      },
+      timeout: 30000
+    });
+
+    const contentType = response.headers['content-type'] || 'application/pdf';
+    
+    if (!contentType.includes('pdf') && !contentType.includes('application/octet-stream')) {
+      console.log('⚠️ Unexpected content type:', contentType);
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="POD_${doNumber}.pdf"`);
+    res.setHeader('Content-Length', response.data.length);
+    res.send(response.data);
+
+    console.log(`✅ POD downloaded for ${doNumber}`);
+
+  } catch (error) {
+    console.error('❌ Download POD error:', error.message);
+    
+    if (error.response?.status === 404) {
+      return res.status(404).json({
+        error: 'POD not available',
+        message: 'Could not download POD. The job may not have a POD document yet.',
+        trackingLink: job.tracking_link || null
+      });
+    }
+
+    res.status(500).json({
+      error: 'Failed to download POD',
+      details: error.message
+    });
+  }
+};
+
 // ===== GET GROUPS =====
 exports.getGroups = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const search = req.query.search || '';
-    
+
     console.log(`📡 Getting groups: page=${page}, limit=${limit}, search=${search}`);
-    
+
     const result = await DetrackService.getGroups(page, limit, search);
-    
+
     res.json({
       success: true,
       data: result
@@ -569,11 +980,11 @@ exports.getGroups = async (req, res) => {
 exports.searchAllGroups = async (req, res) => {
   try {
     const search = req.query.search || '';
-    
+
     console.log(`📡 Searching all groups with term: "${search}"`);
-    
+
     const groups = await DetrackService.searchAllGroups(search);
-    
+
     res.json({
       success: true,
       data: groups
@@ -634,22 +1045,19 @@ exports.getBoxStatus = async (req, res) => {
     const userGroupId = req.user.group_id;
 
     let job;
-    
-    // If admin or staff, get any job by do_number
+
     if (userRole === 'admin' || userRole === 'staff') {
       const query = 'SELECT barcodes, scans FROM jobs WHERE do_number = $1';
       const result = await pool.query(query, [do_number]);
       job = result.rows[0];
     } else {
-      // Customer - only if job belongs to their group
       const query = `
         SELECT barcodes, scans FROM jobs 
         WHERE do_number = $1 AND group_id = $2
       `;
       const result = await pool.query(query, [do_number, userGroupId]);
       job = result.rows[0];
-      
-      // Fallback: check if user created it
+
       if (!job) {
         job = await Job.getBoxStatus(userId, do_number);
       }
@@ -669,10 +1077,10 @@ exports.getBoxStatus = async (req, res) => {
       try { scans = JSON.parse(scans); } catch (e) { scans = []; }
     }
 
-    var scannedBarcodes = scans.map(function(s) { return s.barcode; });
-    
-    var boxStatus = barcodes.map(function(barcode) {
-      var scan = scans.find(function(s) { return s.barcode === barcode; });
+    var scannedBarcodes = scans.map(function (s) { return s.barcode; });
+
+    var boxStatus = barcodes.map(function (barcode) {
+      var scan = scans.find(function (s) { return s.barcode === barcode; });
       return {
         barcode: barcode,
         scanned: !!scan,
@@ -713,21 +1121,19 @@ exports.scanBox = async (req, res) => {
     const userGroupId = req.user.group_id;
 
     let job;
-    
-    // If admin or staff, get any job by do_number
+
     if (userRole === 'admin' || userRole === 'staff') {
       const query = 'SELECT barcodes, scans FROM jobs WHERE do_number = $1';
       const result = await pool.query(query, [do_number]);
       job = result.rows[0];
     } else {
-      // Customer - only if job belongs to their group
       const query = `
         SELECT barcodes, scans FROM jobs 
         WHERE do_number = $1 AND group_id = $2
       `;
       const result = await pool.query(query, [do_number, userGroupId]);
       job = result.rows[0];
-      
+
       if (!job) {
         job = await Job.getBoxStatus(userId, do_number);
       }
@@ -751,9 +1157,9 @@ exports.scanBox = async (req, res) => {
       return res.status(400).json({ error: 'Invalid barcode for this job' });
     }
 
-    var existingScan = scans.find(function(s) { return s.barcode === barcode; });
+    var existingScan = scans.find(function (s) { return s.barcode === barcode; });
     if (existingScan) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Box already scanned',
         scan: existingScan
       });
@@ -770,7 +1176,6 @@ exports.scanBox = async (req, res) => {
 
     scans.push(newScan);
 
-    // Update scans - admin/staff can update any job
     if (userRole === 'admin' || userRole === 'staff') {
       await pool.query(
         'UPDATE jobs SET scans = $1, updated_at = CURRENT_TIMESTAMP WHERE do_number = $2',
@@ -817,7 +1222,7 @@ exports.bulkScan = async (req, res) => {
     const userGroupId = req.user.group_id;
 
     let job;
-    
+
     if (userRole === 'admin' || userRole === 'staff') {
       const query = 'SELECT barcodes, scans FROM jobs WHERE do_number = $1';
       const result = await pool.query(query, [do_number]);
@@ -829,7 +1234,7 @@ exports.bulkScan = async (req, res) => {
       `;
       const result = await pool.query(query, [do_number, userGroupId]);
       job = result.rows[0];
-      
+
       if (!job) {
         job = await Job.getBoxStatus(userId, do_number);
       }
@@ -858,7 +1263,7 @@ exports.bulkScan = async (req, res) => {
         continue;
       }
 
-      var existingScan = scans.find(function(s) { return s.barcode === barcode; });
+      var existingScan = scans.find(function (s) { return s.barcode === barcode; });
       if (existingScan) {
         errors.push({ barcode: barcode, error: 'Already scanned' });
         continue;
@@ -916,7 +1321,7 @@ exports.getDashboardStats = async (req, res) => {
     var userId = req.user.id;
     var userRole = req.user.role;
     var userGroupId = req.user.group_id;
-    
+
     console.log('📊 Fetching dashboard stats for user ' + userId + ' (' + userRole + ')');
 
     var jobQuery = '';
@@ -1049,7 +1454,7 @@ exports.getDashboardStats = async (req, res) => {
     var jobsByDate = Object.keys(jobsByDateMap)
       .sort()
       .slice(-7)
-      .map(function(key) {
+      .map(function (key) {
         var dateObj = new Date(key);
         return {
           date: key,
@@ -1059,7 +1464,7 @@ exports.getDashboardStats = async (req, res) => {
         };
       });
 
-    var recentJobs = jobs.slice(0, 10).map(function(job) {
+    var recentJobs = jobs.slice(0, 10).map(function (job) {
       return {
         reference: job.do_number,
         customerName: job.customer_name || job.recipient_name || 'Unknown',
@@ -1100,7 +1505,6 @@ exports.getDashboardStats = async (req, res) => {
     });
   }
 };
-// src/controllers/jobController.js - Fixed uploadCollectionManifest
 
 // ===== UPLOAD COLLECTION MANIFEST =====
 exports.uploadCollectionManifest = async (req, res) => {
@@ -1109,7 +1513,7 @@ exports.uploadCollectionManifest = async (req, res) => {
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
     const userGroupName = req.user.group_name;
-    
+
     console.log(`📁 Collection file upload received from user ${userId}`);
     console.log('📄 File name:', req.file.originalname);
     console.log('📏 File size:', req.file.size, 'bytes');
@@ -1143,19 +1547,19 @@ exports.uploadCollectionManifest = async (req, res) => {
     console.log('📊 Header row found at index:', headerRowIndex);
     console.log('📊 Data starts at row:', dataStartIndex);
 
-    const headers = rawData[headerRowIndex].map(function(h) { return h?.toString().trim() || ''; });
+    const headers = rawData[headerRowIndex].map(function (h) { return h?.toString().trim() || ''; });
     console.log('📊 Headers:', headers);
 
     const dataRows = [];
 
     for (let i = dataStartIndex; i < rawData.length; i++) {
       const row = rawData[i];
-      if (!row || row.every(function(cell) { return !cell || cell === ''; })) {
+      if (!row || row.every(function (cell) { return !cell || cell === ''; })) {
         console.log(`⏭️ Skipping empty row ${i}`);
         continue;
       }
       const obj = {};
-      headers.forEach(function(header, idx) {
+      headers.forEach(function (header, idx) {
         obj[header.trim()] = row[idx] || '';
       });
       dataRows.push(obj);
@@ -1165,14 +1569,12 @@ exports.uploadCollectionManifest = async (req, res) => {
 
     const validRows = [];
     const errors = [];
-
-    // First pass: Validate rows and collect DO numbers
     const doNumbers = [];
 
     for (let i = 0; i < dataRows.length; i++) {
       const row = dataRows[i];
       const rowErrors = [];
-      const hasData = Object.values(row).some(function(v) { return v && v !== ''; });
+      const hasData = Object.values(row).some(function (v) { return v && v !== ''; });
       if (!hasData) continue;
 
       const doNumber = getValue(row, 'D.O. No.', 'Tracking No.', 'DO No');
@@ -1202,11 +1604,10 @@ exports.uploadCollectionManifest = async (req, res) => {
       });
     }
 
-    // ===== CHECK FOR DUPLICATE DO NUMBERS IN DATABASE =====
     console.log('🔍 Checking for duplicate DO numbers in collections database...');
     const duplicateCheck = await Collection.checkDoNumbersExists(doNumbers);
     const duplicateDoNumbers = Object.keys(duplicateCheck).filter(key => duplicateCheck[key] === true);
-    
+
     if (duplicateDoNumbers.length > 0) {
       console.log(`❌ Found ${duplicateDoNumbers.length} duplicate DO numbers:`, duplicateDoNumbers);
       return res.status(409).json({
@@ -1233,12 +1634,10 @@ exports.uploadCollectionManifest = async (req, res) => {
       const collectFrom = getValue(row, 'Collect From', 'Collect from', 'Sender Name', 'collect_from');
 
       const fullAddress = [address, address2, city, state, postalCode, country].filter(Boolean).join(', ');
-      
-      // Determine group_id: from Excel or use user's group if customer
+
       let groupId = getValue(row, 'Group ID', 'Group Id', 'GroupID', 'group_id');
       let groupName = getValue(row, 'Group Name', 'Group', 'group_name', 'group');
-      
-      // If customer, force their group
+
       if (userRole === 'customer' && userGroupId) {
         groupId = userGroupId;
         groupName = userGroupName || '';
@@ -1277,11 +1676,10 @@ exports.uploadCollectionManifest = async (req, res) => {
     const failedJobs = [];
     const labels = [];
 
-    // 👇 Process each collection one by one with proper await
     for (let i = 0; i < collections.length; i++) {
       const collection = collections[i];
       console.log(`📤 Processing collection ${i + 1}/${collections.length}: ${collection.do_number}`);
-      
+
       try {
         const detrackPayload = {
           do_number: collection.do_number,
@@ -1314,7 +1712,6 @@ exports.uploadCollectionManifest = async (req, res) => {
 
           console.log(`✅ Collection ${collection.do_number} created in Detrack with ID: ${detrackId}`);
 
-          // Save to database
           const savedCollection = await Collection.create({
             do_number: collection.do_number,
             recipient_name: collection.collect_from || '',

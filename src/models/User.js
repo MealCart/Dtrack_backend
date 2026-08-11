@@ -14,7 +14,7 @@ class User {
     const result = await pool.query(
       `SELECT id, email, first_name, last_name, role, status, 
               company_name, company_type, phone, address, 
-              group_id, group_name, group_linked_at,
+              group_id, group_name, group_linked_at, prefix,  -- 👈 ADD prefix
               created_at, last_login 
        FROM users WHERE id = $1`,
       [id]
@@ -26,19 +26,19 @@ class User {
     const { 
       email, passwordHash, firstName, lastName, role, 
       companyName, companyType, phone, address,
-      groupId, groupName
+      groupId, groupName, prefix  // 👈 ADD prefix
     } = userData;
     
     const result = await pool.query(
       `INSERT INTO users (
         email, password_hash, first_name, last_name, role, 
         company_name, company_type, phone, address, status, email_verified,
-        group_id, group_name, group_linked_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-      RETURNING id, email, first_name, last_name, role, company_name, group_id, group_name, created_at`,
+        group_id, group_name, group_linked_at, prefix  -- 👈 ADD prefix
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      RETURNING id, email, first_name, last_name, role, company_name, group_id, group_name, prefix, created_at`,  // 👈 ADD prefix
       [email, passwordHash, firstName, lastName, role, 
        companyName, companyType, phone, address, 'active', false,
-       groupId, groupName, new Date().toISOString()]
+       groupId, groupName, new Date().toISOString(), prefix]  // 👈 ADD prefix
     );
     return result.rows[0];
   }
@@ -59,20 +59,18 @@ class User {
     return result.rows[0];
   }
 
-// src/models/User.js - Fix delete method
-
-static async delete(id) {
-  const result = await pool.query(
-    'DELETE FROM users WHERE id = $1 RETURNING id, email, first_name, last_name, role',
-    [id]
-  );
-  return result.rows[0];
-}
+  static async delete(id) {
+    const result = await pool.query(
+      'DELETE FROM users WHERE id = $1 RETURNING id, email, first_name, last_name, role',
+      [id]
+    );
+    return result.rows[0];
+  }
 
   static async getAll() {
     const result = await pool.query(
       `SELECT id, email, first_name, last_name, role, status, 
-              company_name, phone, group_id, group_name,
+              company_name, phone, group_id, group_name, prefix,  -- 👈 ADD prefix
               created_at, last_login 
        FROM users ORDER BY created_at DESC`
     );
@@ -90,18 +88,18 @@ static async delete(id) {
   static async findByGroup(groupId) {
     const result = await pool.query(
       `SELECT id, email, first_name, last_name, role, status, 
-              company_name, phone, group_id, group_name
+              company_name, phone, group_id, group_name, prefix,  -- 👈 ADD prefix
        FROM users WHERE group_id = $1 ORDER BY created_at DESC`,
       [groupId]
     );
     return result.rows;
   }
 
-  // 🔥 Check if group already has a customer account
+  // Check if group already has a customer account
   static async findCustomerByGroup(groupId) {
     const result = await pool.query(
       `SELECT id, email, first_name, last_name, company_name, 
-              group_id, group_name, status
+              group_id, group_name, status, prefix  -- 👈 ADD prefix
        FROM users WHERE group_id = $1 AND role = 'customer'`,
       [groupId]
     );
@@ -112,7 +110,7 @@ static async delete(id) {
   static async getAllCustomers() {
     const result = await pool.query(
       `SELECT id, email, first_name, last_name, role, status, 
-              company_name, phone, group_id, group_name,
+              company_name, phone, group_id, group_name, prefix,  -- 👈 ADD prefix
               created_at, last_login 
        FROM users WHERE role = 'customer' ORDER BY created_at DESC`
     );
@@ -123,7 +121,7 @@ static async delete(id) {
   static async getAllStaff() {
     const result = await pool.query(
       `SELECT id, email, first_name, last_name, role, status, 
-              company_name, phone, group_id, group_name,
+              company_name, phone, group_id, group_name, prefix,  -- 👈 ADD prefix
               created_at, last_login 
        FROM users WHERE role IN ('staff', 'admin') ORDER BY created_at DESC`
     );

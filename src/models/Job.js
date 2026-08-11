@@ -30,7 +30,14 @@ class Job {
     );
     return result.rows[0];
   }
-
+// ===== FIND JOB BY DO NUMBER (ANY USER - NO USER FILTER) =====
+static async findByDoNumberAny(doNumber) {
+  const result = await pool.query(
+    'SELECT * FROM jobs WHERE do_number = $1',
+    [doNumber]
+  );
+  return result.rows[0];
+}
   // ===== CHECK IF DO NUMBER EXISTS =====
   static async checkDoNumberExists(doNumber) {
     const result = await pool.query(
