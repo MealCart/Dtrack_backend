@@ -5,6 +5,7 @@ const path = require('path');
 const { corsOptions } = require('./config/cors');
 const { errorHandler } = require('./middleware/errorHandler');
 const routes = require('./routes');
+const postCodeRoutes = require('./routes/postCodeRoutes'); // 👈 ADD THIS
 
 const app = express();
 
@@ -22,7 +23,10 @@ app.use('/uploads/labels', express.static(labelsDir));
 app.use('/api/uploads/labels', express.static(labelsDir));
 
 // ===== ROUTES =====
+app.use('/api', postCodeRoutes); // 👈 ADD THIS - MUST BE BEFORE routes
 app.use('/api', routes);
+
+// Request logging middleware
 app.use((req, res, next) => {
   const authHeader = req.headers.authorization;
   console.log('🔍 Request:', {
@@ -33,6 +37,7 @@ app.use((req, res, next) => {
   });
   next();
 });
+
 // ===== HEALTH CHECK =====
 app.get('/api/health', (req, res) => {
   const { pool } = require('./config/database');
@@ -119,6 +124,12 @@ app.get('/', (req, res) => {
       vehicles: {
         'GET /api/vehicles': 'Get vehicles from Detrack API',
       },
+      postcode: {
+        'POST /api/validate-postcode': 'Validate a single post code',
+        'POST /api/validate-postcodes-bulk': 'Validate multiple post codes',
+        'GET /api/postcode-schedule/:postCode': 'Get delivery schedule for a post code',
+        'GET /api/postcodes/:region': 'Get all post codes by region',
+      },
     },
     timestamp: new Date().toISOString()
   });
@@ -164,7 +175,11 @@ app.use((req, res) => {
       'GET /api/box-status/:do_number',
       'POST /api/scan-box',
       'POST /api/bulk-scan',
-      'GET /api/dashboard-stats'
+      'GET /api/dashboard-stats',
+      'POST /api/validate-postcode',
+      'POST /api/validate-postcodes-bulk',
+      'GET /api/postcode-schedule/:postCode',
+      'GET /api/postcodes/:region'
     ]
   });
 });

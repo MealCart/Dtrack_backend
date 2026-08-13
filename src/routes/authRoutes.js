@@ -4,16 +4,19 @@ const router = express.Router();
 const authController = require('../controllers/authController');
 const { authenticate, authorize } = require('../middleware/auth');
 
-// Public routes
+// ===== PUBLIC ROUTES - NO AUTHENTICATION REQUIRED =====
 router.post('/register', authController.register);
 router.post('/login', authController.login);
 
-// Protected routes
-router.get('/me', authenticate, authController.getMe);
-router.post('/logout', authenticate, authController.logout);
+// ===== PROTECTED ROUTES - AUTHENTICATION REQUIRED =====
+// All routes below this line require authentication
+router.use(authenticate);
 
-// Admin-only routes
-router.post('/admin/create-customer', authenticate, authorize('admin'), authController.adminCreateCustomer);
-router.post('/admin/create-staff', authenticate, authorize('admin'), authController.adminCreateStaff);
+router.get('/me', authController.getMe);
+router.post('/logout', authController.logout);
+
+// Admin-only routes (require authentication + admin role)
+router.post('/admin/create-customer', authorize('admin'), authController.adminCreateCustomer);
+router.post('/admin/create-staff', authorize('admin'), authController.adminCreateStaff);
 
 module.exports = router;
