@@ -2,7 +2,9 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { pool } = require('../config/database');
 const { JWT_SECRET, JWT_EXPIRY } = require('../config/jwt');
+const { sendOTPEmail, sendPasswordResetConfirmation } = require('../services/emailService');
 
 // ===== REGISTER (Customer with group) =====
 exports.register = async (req, res) => {
@@ -11,7 +13,7 @@ exports.register = async (req, res) => {
       email, password, firstName, lastName, 
       companyName, companyType, phone, address,
       groupId, groupName,
-      prefix  // 👈 ADD prefix
+      prefix
     } = req.body;
 
     if (!email || !password || !firstName || !lastName) {
@@ -29,7 +31,6 @@ exports.register = async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    // Check if group is provided for customer
     if (!groupId) {
       return res.status(400).json({ 
         error: 'Group selection is required for customer registration' 
@@ -41,7 +42,6 @@ exports.register = async (req, res) => {
       return res.status(409).json({ error: 'Email already registered' });
     }
 
-    // CRITICAL: Check if this group already has a customer account
     const existingCustomer = await User.findCustomerByGroup(groupId);
     if (existingCustomer) {
       return res.status(409).json({ 
@@ -72,7 +72,7 @@ exports.register = async (req, res) => {
       address,
       groupId,
       groupName,
-      prefix: prefix || null  // 👈 ADD prefix
+      prefix: prefix || null
     });
 
     const token = jwt.sign(
@@ -95,7 +95,7 @@ exports.register = async (req, res) => {
         companyName: newUser.company_name,
         groupId: newUser.group_id,
         groupName: newUser.group_name,
-        prefix: newUser.prefix || null  // 👈 ADD prefix
+        prefix: newUser.prefix || null
       },
       token
     });
@@ -145,7 +145,7 @@ exports.login = async (req, res) => {
       role: user.role,
       group_id: user.group_id,
       group_name: user.group_name,
-      prefix: user.prefix  // 👈 ADD prefix
+      prefix: user.prefix
     });
 
     res.json({
@@ -160,7 +160,7 @@ exports.login = async (req, res) => {
         companyName: user.company_name,
         groupId: user.group_id,
         groupName: user.group_name,
-        prefix: user.prefix || null  // 👈 ADD prefix
+        prefix: user.prefix || null
       },
       token
     });
@@ -192,7 +192,7 @@ exports.getMe = async (req, res) => {
         companyName: user.company_name,
         groupId: user.group_id,
         groupName: user.group_name,
-        prefix: user.prefix || null  // 👈 ADD prefix
+        prefix: user.prefix || null
       }
     });
   } catch (error) {
@@ -213,10 +213,10 @@ exports.adminCreateCustomer = async (req, res) => {
       email, password, firstName, lastName, 
       companyName, phone, address,
       groupId, groupName,
-      prefix  // 👈 ADD prefix
+      prefix
     } = req.body;
 
-    // Only admin can create customers with groups
+    // Only admin can create customer accounts
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Only admin can create customer accounts' });
     }
@@ -240,7 +240,6 @@ exports.adminCreateCustomer = async (req, res) => {
       return res.status(409).json({ error: 'Email already exists' });
     }
 
-    // CRITICAL: Check if group already has a customer
     const existingCustomer = await User.findCustomerByGroup(groupId);
     if (existingCustomer) {
       return res.status(409).json({ 
@@ -271,7 +270,7 @@ exports.adminCreateCustomer = async (req, res) => {
       address,
       groupId,
       groupName,
-      prefix: prefix || null  // 👈 ADD prefix
+      prefix: prefix || null
     });
 
     console.log(`✅ Admin created customer: ${newUser.email} for group: ${groupName} with prefix: ${newUser.prefix || 'none'}`);
@@ -288,7 +287,7 @@ exports.adminCreateCustomer = async (req, res) => {
         companyName: newUser.company_name,
         groupId: newUser.group_id,
         groupName: newUser.group_name,
-        prefix: newUser.prefix || null  // 👈 ADD prefix
+        prefix: newUser.prefix || null
       }
     });
 
@@ -336,7 +335,7 @@ exports.adminCreateStaff = async (req, res) => {
       address,
       groupId: null,
       groupName: null,
-      prefix: prefix || null  // 👈 ADD prefix
+      prefix: prefix || null
     });
 
     console.log(`✅ Admin created staff: ${newUser.email} (${newUser.role}) with prefix: ${newUser.prefix || 'none'}`);
@@ -353,7 +352,7 @@ exports.adminCreateStaff = async (req, res) => {
         companyName: newUser.company_name,
         groupId: null,
         groupName: null,
-        prefix: newUser.prefix || null  // 👈 ADD prefix
+        prefix: newUser.prefix || null
       }
     });
 
@@ -362,6 +361,127 @@ exports.adminCreateStaff = async (req, res) => {
     res.status(500).json({
       error: 'Failed to create user',
       details: error.message
+    });
+  }
+};
+
+// ===== ADMIN: CHANGE USER PASSWORD =====
+exports.adminChangePassword = async (req, res) => {
+  try {
+    const { userId, newPassword } = req.body;
+    
+    // Check if admin is changing their own password
+    if (parseInt(userId) === req.user.id) {
+      return res.status(403).json({ 
+        error: 'Use the profile settings to change your own password' 
+      });
+    }
+
+    // Validate input
+    if (!userId || !newPassword) {
+      return res.status(400).json({ 
+        error: 'User ID and new password are required' 
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ 
+        error: 'Password must be at least 6 characters' 
+      });
+    }
+
+    // Check if user exists
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Hash the new password
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(newPassword, saltRounds);
+
+    // Update password in database
+    const result = await pool.query(
+      'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING id, email, first_name, last_name',
+      [passwordHash, userId]
+    );
+
+    if (result.rows.length === 0) {
+      throw new Error('Failed to update password');
+    }
+
+    console.log(`✅ Admin changed password for user: ${result.rows[0].email} (ID: ${userId})`);
+
+    res.json({
+      success: true,
+      message: 'Password updated successfully',
+      user: {
+        id: result.rows[0].id,
+        email: result.rows[0].email,
+        firstName: result.rows[0].first_name,
+        lastName: result.rows[0].last_name
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Admin change password error:', error);
+    res.status(500).json({
+      error: 'Failed to change password',
+      details: error.message
+    });
+  }
+};
+
+// ===== RESET PASSWORD (Public - after OTP verification) =====
+exports.resetPassword = async (req, res) => {
+  try {
+    const { email, newPassword } = req.body;
+
+    if (!email || !newPassword) {
+      return res.status(400).json({ error: 'Email and new password are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    // Check if user exists
+    const user = await User.findByEmail(email.toLowerCase());
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Hash the new password
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(newPassword, saltRounds);
+
+    // Update password
+    await pool.query(
+      'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [passwordHash, user.id]
+    );
+
+    console.log(`✅ Password reset for user: ${email}`);
+
+    // Send confirmation email
+    try {
+      await sendPasswordResetConfirmation(email);
+      console.log(`✅ Password reset confirmation email sent to ${email}`);
+    } catch (emailError) {
+      console.error('❌ Failed to send confirmation email:', emailError.message);
+      // Don't fail the request if email fails
+    }
+
+    res.json({
+      success: true,
+      message: 'Password reset successfully',
+    });
+
+  } catch (error) {
+    console.error('❌ Reset password error:', error);
+    res.status(500).json({
+      error: 'Failed to reset password',
+      details: error.message,
     });
   }
 };
