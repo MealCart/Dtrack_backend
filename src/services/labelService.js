@@ -678,6 +678,7 @@ const drawCustomerNameSection = (
 /* --------------------------------------------------------------------------
  * DRAW ADDRESS / CONTACT SECTION
  * ------------------------------------------------------------------------ */
+// src/services/labelService.js - Complete updated drawAddressSection
 
 const drawAddressSection = (
   page,
@@ -714,11 +715,8 @@ const drawAddressSection = (
   /*
    * Right side reserved for company logo.
    */
-
   const logoSectionWidth = 92;
-
-  const contentWidth =
-    width - logoSectionWidth;
+  const contentWidth = width - logoSectionWidth;
 
   drawVerticalLine(
     page,
@@ -731,27 +729,15 @@ const drawAddressSection = (
   /*
    * Left content.
    */
-
   const paddingX = 8;
-
-  let textY =
-    y + height - 20;
-
-  const textX =
-    x + paddingX;
-
-  const availableTextWidth =
-    contentWidth - paddingX * 2;
+  let textY = y + height - 20;
+  const textX = x + paddingX;
+  const availableTextWidth = contentWidth - paddingX * 2;
 
   /*
    * Optional company name / sender name.
-   *
-   * The reference mainly displays recipient
-   * information in this section.
    */
-
   if (companyName) {
-
     page.drawText(
       String(companyName),
       {
@@ -762,23 +748,20 @@ const drawAddressSection = (
         color: BLACK,
       }
     );
-
     textY -= 12;
   }
 
   /*
-   * Address.
+   * 👇 ADDRESS - NOW BOLD
    */
-
   if (address) {
-
     const cleanAddress = String(address)
       .replace(/\s+/g, ' ')
       .trim();
 
     const addressLines = wrapText(
       cleanAddress,
-      font,
+      fontBold,  // 👈 Changed from 'font' to 'fontBold'
       8.5,
       availableTextWidth
     );
@@ -793,18 +776,16 @@ const drawAddressSection = (
       );
       i++
     ) {
-
       page.drawText(
         addressLines[i],
         {
           x: textX,
           y: textY,
           size: 8.5,
-          font,
+          font: fontBold,  // 👈 Changed from 'font' to 'fontBold'
           color: BLACK,
         }
       );
-
       textY -= 11;
     }
   }
@@ -812,66 +793,36 @@ const drawAddressSection = (
   /*
    * Phone.
    */
-
   if (phone) {
-
     textY -= 1;
-
     page.drawText(
       String(phone),
       {
         x: textX,
         y: textY,
         size: 8.5,
-        font,
+        font: font,  // Keep regular font for phone
         color: BLACK,
       }
     );
   }
 
   /*
-   * Email / other contact information is intentionally
-   * not invented because it isn't part of the current
-   * function parameters.
-   */
-
-  /*
    * Logo.
    */
-
   if (logoImage) {
-
     try {
-
-      const logoAreaX =
-        x + contentWidth;
-
-      const logoAreaWidth =
-        logoSectionWidth;
-
-      const logoAreaHeight =
-        height;
-
+      const logoAreaX = x + contentWidth;
+      const logoAreaWidth = logoSectionWidth;
+      const logoAreaHeight = height;
       const maxLogoWidth = 65;
       const maxLogoHeight = 45;
 
-      /*
-       * Use fixed dimensions for predictable label printing.
-       */
+      const logoWidth = maxLogoWidth;
+      const logoHeight = maxLogoHeight;
 
-      const logoWidth =
-        maxLogoWidth;
-
-      const logoHeight =
-        maxLogoHeight;
-
-      const logoX =
-        logoAreaX +
-        (logoAreaWidth - logoWidth) / 2;
-
-      const logoY =
-        y +
-        (logoAreaHeight - logoHeight) / 2;
+      const logoX = logoAreaX + (logoAreaWidth - logoWidth) / 2;
+      const logoY = y + (logoAreaHeight - logoHeight) / 2;
 
       page.drawImage(
         logoImage,
@@ -882,13 +833,8 @@ const drawAddressSection = (
           height: logoHeight,
         }
       );
-
     } catch (error) {
-
-      console.error(
-        'Error drawing logo:',
-        error
-      );
+      console.error('Error drawing logo:', error);
     }
   }
 };
