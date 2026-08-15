@@ -53,7 +53,7 @@ exports.createCollection = async (req, res) => {
     const detrackPayload = {
       do_number: collectionData.do_number,
       address: collectionData.collection_address || 'Address not provided',
-      collect_from: recipientName,
+      deliver_to_collect_from: collectionData.collect_from || collectionData.recipient_name || 'Unknown Sender',  // 👈 Use deliver_to_collect_from
       date: collectionData.scheduled_date || new Date().toISOString().split('T')[0],
       phone: collectionData.recipient_phone || '',
       notify_email: collectionData.notify_email || '',

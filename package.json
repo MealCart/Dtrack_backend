@@ -21,6 +21,7 @@
     "pdf-lib": "^1.17.1",
     "pg": "^8.22.0",
     "qrcode": "^1.5.4",
+    "raxon-barcode-scanner": "^0.3.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

@@ -10,6 +10,7 @@ const collectionRoutes = require('./collectionRoutes');
 const contactRoutes = require('./contactRoutes');
 const timeRoutes = require('./timeRoutes');
 const postcodeManagementRoutes = require('./postcodeManagementRoutes'); // 👈 MUST EXIST
+const calendarRoutes = require('./calendarRoutes'); // 👈 ADD THIS
 const vehicleController = require('../controllers/vehicleController');
 const { authenticate } = require('../middleware/auth');
 
@@ -21,6 +22,7 @@ router.use('/', labelRoutes);
 router.use('/', collectionRoutes);
 router.use('/', contactRoutes);
 router.use('/', timeRoutes);
+router.use('/', calendarRoutes);
 
 // 👇 Postcode Management Routes (Admin only)
 router.use('/admin', postcodeManagementRoutes);

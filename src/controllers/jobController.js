@@ -327,7 +327,7 @@ exports.createJob = async (req, res) => {
     const detrackPayload = {
       do_number: jobData.do_number,
       address: jobData.address,
-      deliver_to: jobData.deliver_to,
+     deliver_to_collect_from: jobData.deliver_to || jobData.recipient_name || 'Recipient required',
       date: jobData.date || null,
       phone: jobData.phone || '',
       notify_email: jobData.notify_email || '',
