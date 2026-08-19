@@ -242,6 +242,8 @@ exports.generateLabels = async (req, res) => {
 
 // ===== GENERATE AND DOWNLOAD LABELS DIRECTLY =====
 // src/controllers/labelController.js
+
+// ===== GENERATE AND DOWNLOAD LABELS DIRECTLY =====
 exports.generateAndDownloadLabels = async (req, res) => {
   try {
     const { 
@@ -267,7 +269,7 @@ exports.generateAndDownloadLabels = async (req, res) => {
 
     console.log(`📦 Generating and downloading labels for ${doNumber}...`);
 
-    // ===== Fetch from Detrack to get state data =====
+    // ===== FETCH FROM DETRACK TO GET LATEST DATA =====
     let detrackJob = null;
     let finalState = reqState || '';
     let finalCity = reqCity || '';
@@ -286,7 +288,7 @@ exports.generateAndDownloadLabels = async (req, res) => {
       console.error('❌ Failed to fetch job from Detrack:', error.message);
     }
 
-    // ===== Check if job exists in DB =====
+    // ===== CHECK IF JOB EXISTS IN DB =====
     let job = await Job.findByDoNumberAny(doNumber);
     let finalBarcodes = barcodes || [];
     let finalCustomerName = customerName;
@@ -295,12 +297,13 @@ exports.generateAndDownloadLabels = async (req, res) => {
     let finalPhone = phone || '';
     let finalInstructions = instructions || '';
 
-    // ===== Use Detrack data as fallback =====
+    // ===== USE DETRACK DATA AS FALLBACK =====
     if (detrackJob) {
+      const shippingLabels = detrackJob.number_of_shipping_labels || 
+                            detrackJob.cartons || 
+                            detrackJob.boxes || 1;
+      
       if (!finalBarcodes || finalBarcodes.length === 0) {
-        const shippingLabels = detrackJob.number_of_shipping_labels || 
-                              detrackJob.cartons || 
-                              detrackJob.boxes || 1;
         finalBarcodes = generateBarcodes(doNumber, shippingLabels);
       }
       
@@ -324,7 +327,7 @@ exports.generateAndDownloadLabels = async (req, res) => {
       }
     }
 
-    // ===== Use DB data as fallback =====
+    // ===== USE DB DATA AS FALLBACK =====
     if (job) {
       if (!finalBarcodes || finalBarcodes.length === 0) {
         finalBarcodes = job.barcodes || [];
@@ -353,7 +356,7 @@ exports.generateAndDownloadLabels = async (req, res) => {
 
     console.log(`📍 Generating labels with state: "${finalState}"`);
 
-    // ===== Generate PDF with state data =====
+    // ===== GENERATE PDF =====
     const pdfDoc = await generateShippingLabels(
       doNumber,
       finalBarcodes,
@@ -372,7 +375,107 @@ exports.generateAndDownloadLabels = async (req, res) => {
 
     console.log(`✅ PDF generated with state: "${finalState}" for ${doNumber}, size: ${pdfBytes.length} bytes`);
 
-    // ✅ Return the PDF directly with proper headers
+    // ============================================================
+    // 👇 NEW: SAVE TO DATABASE (SYNC JOB AND LABEL)
+    // ============================================================
+    
+    // 1. SAVE THE LABEL RECORD
+    const filename = `labels_${doNumber}_${Date.now()}.pdf`;
+    const filepath = path.join(LABELS_DIR, filename);
+    fs.writeFileSync(filepath, pdfBytes);
+    const fileUrl = `/uploads/labels/${filename}`;
+
+    // 2. CREATE LABEL RECORD IN DATABASE
+    try {
+      await Label.create({
+        doNumber,
+        filename,
+        filepath,
+        fileUrl,
+        labelCount: finalBarcodes.length,
+        barcodes: finalBarcodes,
+        userId
+      });
+      console.log(`✅ Label record saved for ${doNumber}`);
+    } catch (labelError) {
+      console.error(`❌ Failed to save label record:`, labelError.message);
+    }
+
+    // 3. CREATE OR UPDATE JOB IN DATABASE
+    try {
+      // Check if job exists in DB
+      const existingJob = await Job.findByDoNumberAny(doNumber);
+      
+      if (!existingJob) {
+        // CREATE new job from Detrack data
+        const newJobData = {
+          do_number: doNumber,
+          customer_name: finalCustomerName,
+          customer_company: finalCompanyName,
+          phone: finalPhone,
+          delivery_address: finalAddress,
+          postcode: finalPostcode,
+          recipient_name: finalCustomerName,
+          recipient_phone: finalPhone,
+          boxes: finalBarcodes.length,
+          weight: 0,
+          contents: finalInstructions || '',
+          status: detrackJob?.status || detrackJob?.primary_job_status || 'pending',
+          scheduled_date: detrackJob?.date || new Date().toISOString().split('T')[0],
+          special_instructions: finalInstructions || '',
+          barcodes: finalBarcodes,
+          detrack_id: detrackJob?.id || '',
+          source: 'detrack_sync',
+          group_name: detrackJob?.group_name || '',
+          group_id: detrackJob?.group_id || '',
+          pickup_address: '',
+          user_id: userId,
+          state: finalState,
+          city: finalCity,
+          label_url: fileUrl  // 👈 Add the label URL
+        };
+        
+        await Job.create(newJobData);
+        console.log(`✅ Job ${doNumber} CREATED in database from Detrack sync`);
+      } else {
+        // UPDATE existing job
+        const updateData = {
+          customer_name: finalCustomerName,
+          customer_company: finalCompanyName,
+          phone: finalPhone,
+          delivery_address: finalAddress,
+          postcode: finalPostcode,
+          recipient_name: finalCustomerName,
+          recipient_phone: finalPhone,
+          boxes: finalBarcodes.length,
+          status: detrackJob?.status || detrackJob?.primary_job_status || existingJob.status,
+          scheduled_date: detrackJob?.date || existingJob.scheduled_date,
+          special_instructions: finalInstructions || existingJob.special_instructions,
+          barcodes: finalBarcodes,
+          detrack_id: detrackJob?.id || existingJob.detrack_id,
+          state: finalState || existingJob.state,
+          city: finalCity || existingJob.city,
+          group_name: detrackJob?.group_name || existingJob.group_name,
+          group_id: detrackJob?.group_id || existingJob.group_id,
+        };
+        
+        await Job.update(doNumber, updateData);
+        console.log(`✅ Job ${doNumber} UPDATED in database`);
+      }
+
+      // 4. Update label_url in job
+      await Job.updateLabelUrl(doNumber, fileUrl);
+      console.log(`✅ Label URL updated for ${doNumber}`);
+      
+    } catch (dbError) {
+      console.error(`❌ Failed to save job to database:`, dbError.message);
+      // Don't fail the PDF download, just log the error
+    }
+
+    // ============================================================
+    // RETURN THE PDF
+    // ============================================================
+    
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="labels_${doNumber}.pdf"`);
     res.setHeader('Content-Length', pdfBytes.length);
