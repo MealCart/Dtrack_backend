@@ -281,13 +281,22 @@ exports.getJob = async (req, res) => {
 // ===== FETCH JOB BY DO NUMBER FROM DETRACK API =====
 exports.getJobByDoNumber = async (req, res) => {
   try {
-    const { do_number } = req.query;
+    // ✅ FIX: Get do_number from query and decode it
+    let do_number = req.query.do_number;
+    
     if (!do_number) {
       return res.status(400).json({ error: 'do_number is required' });
     }
+
+    // ✅ Decode URL-encoded characters
+    // This handles: %23 -> #, etc.
+    do_number = decodeURIComponent(do_number);
+    
     console.log(`📡 Fetching job by DO number: ${do_number} from Detrack...`);
+    
     const job = await DetrackService.getJobByDoNumber(do_number);
     console.log(`✅ ${job ? 'Found' : 'No'} job found for DO number: ${do_number}`);
+    
     return res.json({
       success: true,
       data: job
@@ -1410,7 +1419,18 @@ exports.getDetrackJob = async (req, res) => {
 // ===== GET BOX STATUS =====
 exports.getBoxStatus = async (req, res) => {
   try {
-    const { do_number } = req.params;
+    // ✅ FIX: Decode the DO number from URL parameter
+    let do_number = req.params.do_number;
+    
+    if (do_number) {
+      try {
+        do_number = decodeURIComponent(do_number);
+        console.log(`📦 Decoded DO number: ${do_number}`);
+      } catch (e) {
+        console.log(`⚠️ Could not decode do_number: ${do_number}`);
+      }
+    }
+    
     const userId = req.user.id;
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
@@ -1434,10 +1454,111 @@ exports.getBoxStatus = async (req, res) => {
       }
     }
 
+    // If job not in database, try Detrack
     if (!job) {
-      return res.status(404).json({ error: 'Job not found' });
+      console.log(`📡 Job ${do_number} not in DB, checking Detrack...`);
+      
+      try {
+        const detrackJob = await DetrackService.getJobByDoNumber(do_number);
+        
+        if (!detrackJob) {
+          return res.status(404).json({ 
+            error: 'Job not found in Detrack or database',
+            do_number: do_number
+          });
+        }
+
+        // Generate barcodes from Detrack data
+        const shippingLabels = detrackJob.number_of_shipping_labels || 
+                              detrackJob.cartons || 
+                              detrackJob.boxes || 1;
+        
+        let barcodes = [];
+        for (let i = 0; i < shippingLabels; i++) {
+          barcodes.push(`${do_number}-${String(i + 1).padStart(2, '0')}`);
+        }
+
+        let scans = [];
+        if (detrackJob.milestones && detrackJob.milestones.length > 0) {
+          scans = detrackJob.milestones
+            .filter(m => m.status === 'completed' || m.status === 'delivered')
+            .map(m => ({
+              barcode: do_number,
+              checkpoint: m.status,
+              timestamp: m.pod_at || m.created_at,
+              staff: m.user_name || 'System',
+              location: m.pod_address || detrackJob.address || '',
+              scanned_by: m.user_name || 'System'
+            }));
+        }
+
+        if ((detrackJob.status === 'completed' || detrackJob.status === 'delivered') && scans.length === 0) {
+          scans = barcodes.map(code => ({
+            barcode: code,
+            checkpoint: 'Delivered',
+            timestamp: detrackJob.pod_at || detrackJob.updated_at || new Date().toISOString(),
+            staff: 'System',
+            location: detrackJob.address || '',
+            scanned_by: 'System'
+          }));
+        }
+
+        job = {
+          barcodes: barcodes,
+          scans: scans
+        };
+
+        // Sync to database
+        try {
+          const jobData = {
+            do_number: do_number,
+            customer_name: detrackJob.deliver_to_collect_from || detrackJob.deliver_to || 'Unknown',
+            customer_company: detrackJob.company_name || '',
+            phone: detrackJob.phone || detrackJob.phone_number || '',
+            delivery_address: detrackJob.address || '',
+            postcode: detrackJob.postal_code || '',
+            recipient_name: detrackJob.deliver_to_collect_from || detrackJob.deliver_to || 'Unknown',
+            recipient_phone: detrackJob.phone || detrackJob.phone_number || '',
+            boxes: shippingLabels,
+            weight: detrackJob.weight || 0,
+            contents: detrackJob.note || '',
+            status: detrackJob.status || detrackJob.primary_job_status || 'pending',
+            scheduled_date: detrackJob.date || new Date().toISOString().split('T')[0],
+            special_instructions: detrackJob.instructions || '',
+            barcodes: barcodes,
+            detrack_id: detrackJob.id || '',
+            source: 'detrack_sync',
+            group_name: detrackJob.group_name || '',
+            group_id: detrackJob.group_id || '',
+            pickup_address: '',
+            user_id: userId,
+            state: detrackJob.state || '',
+            city: detrackJob.city || ''
+          };
+
+          const existingJob = await Job.findByDoNumberAny(do_number);
+          if (!existingJob) {
+            await Job.create(jobData);
+            console.log(`✅ Job ${do_number} synced to database`);
+          } else {
+            await Job.update(do_number, jobData);
+            console.log(`✅ Job ${do_number} updated in database`);
+          }
+        } catch (dbError) {
+          console.warn(`⚠️ Could not save job ${do_number} to database:`, dbError.message);
+        }
+
+      } catch (detrackError) {
+        console.error(`❌ Failed to fetch job ${do_number} from Detrack:`, detrackError.message);
+        return res.status(404).json({ 
+          error: 'Job not found',
+          do_number: do_number,
+          details: detrackError.message
+        });
+      }
     }
 
+    // Parse barcodes and scans
     let barcodes = job.barcodes || [];
     let scans = job.scans || [];
 
@@ -1448,6 +1569,7 @@ exports.getBoxStatus = async (req, res) => {
       try { scans = JSON.parse(scans); } catch (e) { scans = []; }
     }
 
+    // Build box status
     var scannedBarcodes = scans.map(function (s) { return s.barcode; });
 
     var boxStatus = barcodes.map(function (barcode) {
@@ -1456,7 +1578,7 @@ exports.getBoxStatus = async (req, res) => {
         barcode: barcode,
         scanned: !!scan,
         scanTime: scan?.timestamp || null,
-        scannedBy: scan?.scanned_by || null,
+        scannedBy: scan?.scanned_by || scan?.staff || null,
         location: scan?.location || null,
         checkpoint: scan?.checkpoint || 'Pending'
       };
@@ -1486,10 +1608,46 @@ exports.getBoxStatus = async (req, res) => {
 // ===== SCAN BOX =====
 exports.scanBox = async (req, res) => {
   try {
-    const { do_number, barcode, location } = req.body;
+    // ✅ FIX: Get and decode do_number if it was URL-encoded
+    let do_number = req.body.do_number;
+    let barcode = req.body.barcode;
+    
+    // If do_number was passed as URL parameter (not likely, but safe)
+    if (req.params.do_number) {
+      do_number = decodeURIComponent(req.params.do_number);
+    }
+    
+    // ✅ Decode the DO number in case it was encoded
+    if (do_number && typeof do_number === 'string') {
+      try {
+        do_number = decodeURIComponent(do_number);
+      } catch (e) {
+        // If decoding fails, use as-is
+        console.log(`⚠️ Could not decode do_number: ${do_number}`);
+      }
+    }
+    
+    // ✅ Also decode barcode if needed
+    if (barcode && typeof barcode === 'string') {
+      try {
+        barcode = decodeURIComponent(barcode);
+      } catch (e) {
+        // If decoding fails, use as-is
+      }
+    }
+
+    console.log(`📦 Scanning box: ${barcode} for job: ${do_number}`);
+    
+    const location = req.body.location || 'Warehouse';
     const userId = req.user.id;
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
+
+    if (!do_number || !barcode) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: do_number and barcode' 
+      });
+    }
 
     let job;
 
@@ -1510,10 +1668,78 @@ exports.scanBox = async (req, res) => {
       }
     }
 
+    // If job not found, try to fetch from Detrack
     if (!job) {
-      return res.status(404).json({ error: 'Job not found' });
+      console.log(`📡 Job ${do_number} not in DB, attempting to sync...`);
+      try {
+        const detrackJob = await DetrackService.getJobByDoNumber(do_number);
+        if (detrackJob) {
+          // Sync job to database first
+          const shippingLabels = detrackJob.number_of_shipping_labels || 
+                                detrackJob.cartons || 
+                                detrackJob.boxes || 1;
+          let barcodes = [];
+          for (let i = 0; i < shippingLabels; i++) {
+            barcodes.push(`${do_number}-${String(i + 1).padStart(2, '0')}`);
+          }
+
+          const jobData = {
+            do_number: do_number,
+            customer_name: detrackJob.deliver_to_collect_from || detrackJob.deliver_to || 'Unknown',
+            customer_company: detrackJob.company_name || '',
+            phone: detrackJob.phone || detrackJob.phone_number || '',
+            delivery_address: detrackJob.address || '',
+            postcode: detrackJob.postal_code || '',
+            recipient_name: detrackJob.deliver_to_collect_from || detrackJob.deliver_to || 'Unknown',
+            recipient_phone: detrackJob.phone || detrackJob.phone_number || '',
+            boxes: shippingLabels,
+            weight: detrackJob.weight || 0,
+            contents: detrackJob.note || '',
+            status: detrackJob.status || detrackJob.primary_job_status || 'pending',
+            scheduled_date: detrackJob.date || new Date().toISOString().split('T')[0],
+            special_instructions: detrackJob.instructions || '',
+            barcodes: barcodes,
+            detrack_id: detrackJob.id || '',
+            source: 'detrack_sync',
+            group_name: detrackJob.group_name || '',
+            group_id: detrackJob.group_id || '',
+            pickup_address: '',
+            user_id: userId,
+            state: detrackJob.state || '',
+            city: detrackJob.city || ''
+          };
+
+          const existingJob = await Job.findByDoNumberAny(do_number);
+          if (!existingJob) {
+            await Job.create(jobData);
+            console.log(`✅ Job ${do_number} synced to database`);
+          } else {
+            await Job.update(do_number, jobData);
+            console.log(`✅ Job ${do_number} updated in database`);
+          }
+
+          // Now fetch the job again
+          const query = 'SELECT barcodes, scans FROM jobs WHERE do_number = $1';
+          const result = await pool.query(query, [do_number]);
+          job = result.rows[0];
+        }
+      } catch (syncError) {
+        console.error(`❌ Failed to sync job ${do_number}:`, syncError.message);
+        return res.status(404).json({ 
+          error: 'Job not found. Please generate labels first.',
+          do_number: do_number
+        });
+      }
     }
 
+    if (!job) {
+      return res.status(404).json({ 
+        error: 'Job not found. Please generate labels first.',
+        do_number: do_number
+      });
+    }
+
+    // Parse barcodes and scans
     let barcodes = job.barcodes || [];
     let scans = job.scans || [];
 
@@ -1524,10 +1750,16 @@ exports.scanBox = async (req, res) => {
       try { scans = JSON.parse(scans); } catch (e) { scans = []; }
     }
 
+    // Check if barcode is valid for this job
     if (!barcodes.includes(barcode)) {
-      return res.status(400).json({ error: 'Invalid barcode for this job' });
+      return res.status(400).json({ 
+        error: 'Invalid barcode for this job',
+        barcode: barcode,
+        expectedBarcodes: barcodes
+      });
     }
 
+    // Check if already scanned
     var existingScan = scans.find(function (s) { return s.barcode === barcode; });
     if (existingScan) {
       return res.status(400).json({
@@ -1536,6 +1768,7 @@ exports.scanBox = async (req, res) => {
       });
     }
 
+    // Add the scan
     var newScan = {
       barcode: barcode,
       checkpoint: 'Scanned',
@@ -1547,6 +1780,7 @@ exports.scanBox = async (req, res) => {
 
     scans.push(newScan);
 
+    // Update database
     if (userRole === 'admin' || userRole === 'staff') {
       await pool.query(
         'UPDATE jobs SET scans = $1, updated_at = CURRENT_TIMESTAMP WHERE do_number = $2',
@@ -1583,7 +1817,6 @@ exports.scanBox = async (req, res) => {
     });
   }
 };
-
 // ===== BULK SCAN =====
 exports.bulkScan = async (req, res) => {
   try {
