@@ -45,7 +45,8 @@ function mapDetrackJobToBooking(job) {
     'delivered': 'delivered',
     'failed': 'failed',
     'dispatched': 'dispatched',
-    'completed': 'completed'
+    'completed': 'completed',
+    'cancelled': 'cancelled'
   };
   const mappedStatus = statusMap[job.status?.toLowerCase()] || 'pending';
 
@@ -104,7 +105,12 @@ function mapDetrackJobToBooking(job) {
       photo_10: job.photo_10_file_url
     },
     milestones: job.milestones || [],
-    cartons: job.cartons || shippingLabels
+    cartons: job.cartons || shippingLabels,
+    state: job.state || '',
+    city: job.city || '',
+    country: job.country || '',
+    address_1: job.address_1 || '',
+    address_2: job.address_2 || ''
   };
 }
 
@@ -432,7 +438,6 @@ exports.createJob = async (req, res) => {
   }
 };
 
-// ===== FETCH COLLECTIONS FROM DETRACK API =====
 exports.getDetrackCollections = async (req, res) => {
   try {
     const { date, groupId, page, limit } = req.query;
@@ -448,7 +453,6 @@ exports.getDetrackCollections = async (req, res) => {
       userGroupId: userGroupId
     });
 
-    // 👇 ALWAYS fetch from Detrack with type=Collection
     const queryParams = {
       type: 'Collection'
     };
@@ -464,51 +468,93 @@ exports.getDetrackCollections = async (req, res) => {
       queryParams.limit = parseInt(limit);
     }
 
-    // 👇 Do NOT send group_id to Detrack (it doesn't work)
-    // Instead, we will filter on the backend
-
-    console.log('📤 Fetching all collections from Detrack (will filter by group on backend)');
+    console.log('📤 Fetching from Detrack with params:', queryParams);
 
     const response = await DetrackService.getJobsWithFilters(queryParams);
 
-    let mappedCollections = response?.data?.map(function(job) {
-      return mapDetrackJobToBooking(job);
-    }) || [];
+    let mappedCollections = response?.data?.map(job => mapDetrackJobToBooking(job)) || [];
 
-    mappedCollections.forEach(function(collection) {
+    mappedCollections.forEach(collection => {
       collection.type = 'collection';
     });
 
-    // 👇 FILTER ON BACKEND BASED ON USER ROLE
     const targetGroupId = userRole === 'customer' ? userGroupId : (groupId || null);
 
+    let filteredCollections = mappedCollections;
+    let totalCount = 0;
+    const currentPage = parseInt(page) || 1;
+    const itemsPerPage = parseInt(limit) || 100;
+
     if (targetGroupId) {
-      const beforeFilter = mappedCollections.length;
-      mappedCollections = mappedCollections.filter(function(collection) {
-        return collection.groupId === targetGroupId || collection.group_id === targetGroupId;
-      });
-      console.log(`🔒 Filtered ${beforeFilter} collections to ${mappedCollections.length} collections for group: ${targetGroupId}`);
+      // ✅ Customer: Fetch all pages for collections
+      try {
+        let allGroupCollections = [];
+        let currentPageTemp = 1;
+        let hasNextTemp = true;
+        let safetyLimit = 0;
+        
+        while (hasNextTemp && safetyLimit < 20) {
+          const tempParams = { 
+            ...queryParams, 
+            page: currentPageTemp, 
+            limit: 100 
+          };
+          
+          const tempResponse = await DetrackService.getJobsWithFilters(tempParams);
+          
+          if (tempResponse?.data && tempResponse.data.length > 0) {
+            const tempCollections = tempResponse.data.map(job => mapDetrackJobToBooking(job));
+            tempCollections.forEach(c => c.type = 'collection');
+            const groupCollections = tempCollections.filter(collection => 
+              collection.groupId === targetGroupId || collection.group_id === targetGroupId
+            );
+            allGroupCollections = allGroupCollections.concat(groupCollections);
+          }
+          
+          hasNextTemp = tempResponse?.links?.next !== null && tempResponse.data?.length > 0;
+          currentPageTemp++;
+          safetyLimit++;
+        }
+        
+        totalCount = allGroupCollections.length;
+        console.log(`📊 Total collections for group ${targetGroupId}: ${totalCount}`);
+        
+        // Apply pagination
+        const startIndex = (parseInt(page || 1) - 1) * itemsPerPage;
+        const endIndex = Math.min(startIndex + itemsPerPage, allGroupCollections.length);
+        filteredCollections = allGroupCollections.slice(startIndex, endIndex);
+        
+      } catch (error) {
+        console.error('Error counting group collections:', error);
+        totalCount = filteredCollections.length;
+      }
     } else {
-      console.log('👑 Showing ALL collections (admin/staff)');
+      // ✅ Admin/Staff: Use Detrack's total_count
+      totalCount = response?.total_count || 0;
+      filteredCollections = mappedCollections;
     }
 
-    console.log('✅ Fetched ' + mappedCollections.length + ' collections from Detrack');
+    const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
+    const hasNext = currentPage < totalPages;
+
+    console.log(`📊 Total collections: ${totalCount}, Pages: ${totalPages}, Current: ${currentPage}`);
 
     return res.json({
       success: true,
-      data: mappedCollections,
+      data: filteredCollections,
       source: 'detrack',
       meta: {
-        total: mappedCollections.length,
-        page: queryParams.page || 1,
-        limit: queryParams.limit || 25,
-        hasNext: response?.links?.next !== null && mappedCollections.length === (queryParams.limit || 25),
-        nextPage: response?.links?.next || null,
+        total: totalCount,  // ✅ Correct filtered total
+        page: currentPage,
+        limit: itemsPerPage,
+        hasNext: hasNext,
+        totalPages: totalPages,
         date: date,
         groupId: targetGroupId,
         role: userRole
       },
-      links: response?.links || null
+      links: response?.links || null,
+      total_count: totalCount
     });
 
   } catch (error) {
@@ -520,6 +566,24 @@ exports.getDetrackCollections = async (req, res) => {
   }
 };
 
+exports.downloadLabels = (req, res) => {
+  try {
+    const filename = req.params.filename;
+    const filepath = path.join(LABELS_DIR, filename);
+
+    if (!fs.existsSync(filepath)) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    res.download(filepath, filename);
+  } catch (error) {
+    console.error('❌ Error downloading labels:', error);
+    return res.status(500).json({
+      error: 'Failed to download labels',
+      details: error.message
+    });
+  }
+};
 // ===== UPLOAD MANIFEST =====
 exports.uploadManifest = async (req, res) => {
   try {
@@ -786,9 +850,6 @@ exports.uploadManifest = async (req, res) => {
   }
 };
 
-
-
-// ===== FETCH JOBS FROM DETRACK API WITH FILTERS & PAGINATION =====
 exports.getDetrackJobsWithFilters = async (req, res) => {
   try {
     const { date, groupId, page, limit } = req.query;
@@ -804,7 +865,6 @@ exports.getDetrackJobsWithFilters = async (req, res) => {
       userGroupId: userGroupId
     });
 
-    // 👇 ALWAYS fetch from Detrack with type=Delivery
     const queryParams = {
       type: 'Delivery'
     };
@@ -817,51 +877,114 @@ exports.getDetrackJobsWithFilters = async (req, res) => {
       queryParams.page = parseInt(page);
     }
     
-    // 👇 Set default limit to 50 if not provided
-    const effectiveLimit = limit ? parseInt(limit) : 150;
+    const effectiveLimit = limit ? parseInt(limit) : 100;
     queryParams.limit = effectiveLimit;
 
-    // 👇 Do NOT send group_id to Detrack (it doesn't work)
-    // Instead, we will filter on the backend
+    console.log('📤 Fetching from Detrack with params:', queryParams);
 
-    console.log('📤 Fetching all deliveries from Detrack (will filter by group on backend)');
-
+    // ✅ Get jobs from Detrack
     const response = await DetrackService.getJobsWithFilters(queryParams);
 
-    let mappedJobs = response?.data?.map(function(job) {
-      return mapDetrackJobToBooking(job);
-    }) || [];
+    let mappedJobs = response?.data?.map(job => mapDetrackJobToBooking(job)) || [];
 
-    // 👇 FILTER ON BACKEND BASED ON USER ROLE
+    // ✅ Determine target group
     const targetGroupId = userRole === 'customer' ? userGroupId : (groupId || null);
 
+    // ✅ Filter by group if needed
+    let filteredJobs = mappedJobs;
     if (targetGroupId) {
       const beforeFilter = mappedJobs.length;
-      mappedJobs = mappedJobs.filter(function(job) {
-        return job.groupId === targetGroupId || job.group_id === targetGroupId;
-      });
-      console.log(`🔒 Filtered ${beforeFilter} jobs to ${mappedJobs.length} jobs for group: ${targetGroupId}`);
+      filteredJobs = mappedJobs.filter(job => 
+        job.groupId === targetGroupId || job.group_id === targetGroupId
+      );
+      console.log(`🔒 Filtered ${beforeFilter} jobs to ${filteredJobs.length} jobs for group: ${targetGroupId}`);
     } else {
       console.log('👑 Showing ALL jobs (admin/staff)');
     }
 
-    console.log('✅ Fetched ' + mappedJobs.length + ' jobs from Detrack');
+    // ✅ Calculate the CORRECT total count
+    let totalCount = 0;
+    const currentPage = parseInt(page) || 1;
+    const itemsPerPage = parseInt(limit) || 100;
+
+    if (targetGroupId) {
+      // ✅ For customers: We need to get the total count for this group
+      // Option 1: If Detrack supports group_id filter, use it
+      // Option 2: Count all jobs for this group by fetching all pages
+      
+      // For now, let's use the filtered count from the current page
+      // BUT this is only the count for the current page, not the total
+      // So we need to fetch ALL pages for customers to get correct total
+      
+      // ✅ SIMPLE FIX: Fetch all pages for customers to get correct total
+      try {
+        let allGroupJobs = [];
+        let currentPageTemp = 1;
+        let hasNextTemp = true;
+        let safetyLimit = 0;
+        
+        // Fetch all pages (with safety limit of 20 pages)
+        while (hasNextTemp && safetyLimit < 20) {
+          const tempParams = { 
+            ...queryParams, 
+            page: currentPageTemp, 
+            limit: 100 
+          };
+          
+          const tempResponse = await DetrackService.getJobsWithFilters(tempParams);
+          
+          if (tempResponse?.data && tempResponse.data.length > 0) {
+            const tempJobs = tempResponse.data.map(job => mapDetrackJobToBooking(job));
+            const groupJobs = tempJobs.filter(job => 
+              job.groupId === targetGroupId || job.group_id === targetGroupId
+            );
+            allGroupJobs = allGroupJobs.concat(groupJobs);
+          }
+          
+          hasNextTemp = tempResponse?.links?.next !== null && tempResponse.data?.length > 0;
+          currentPageTemp++;
+          safetyLimit++;
+        }
+        
+        totalCount = allGroupJobs.length;
+        console.log(`📊 Total jobs for group ${targetGroupId}: ${totalCount}`);
+        
+        // ✅ Apply pagination to the filtered results
+        const startIndex = (parseInt(page || 1) - 1) * itemsPerPage;
+        const endIndex = Math.min(startIndex + itemsPerPage, allGroupJobs.length);
+        filteredJobs = allGroupJobs.slice(startIndex, endIndex);
+        
+      } catch (error) {
+        console.error('Error counting group jobs:', error);
+        // Fallback: use the filtered count from the current page
+        totalCount = filteredJobs.length;
+      }
+    } else {
+      // ✅ Admin/Staff: Use Detrack's total_count
+      totalCount = response?.total_count || 0;
+    }
+
+    const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
+    const hasNext = currentPage < totalPages;
+
+    console.log(`📊 Total jobs: ${totalCount}, Pages: ${totalPages}, Current: ${currentPage}`);
 
     return res.json({
       success: true,
-      data: mappedJobs,
+      data: filteredJobs,
       source: 'detrack',
       meta: {
-        total: mappedJobs.length,
-        page: queryParams.page || 1,
-        limit: effectiveLimit,
-        hasNext: response?.links?.next !== null && mappedJobs.length === effectiveLimit,
-        nextPage: response?.links?.next || null,
+        total: totalCount,  // ✅ Now this is the CORRECT filtered total
+        page: currentPage,
+        limit: itemsPerPage,
+        hasNext: hasNext,
+        totalPages: totalPages,
         date: date,
         groupId: targetGroupId,
         role: userRole
       },
-      links: response?.links || null
+      links: response?.links || null,
+      total_count: totalCount  // ✅ Also return as total_count
     });
 
   } catch (error) {
@@ -869,6 +992,254 @@ exports.getDetrackJobsWithFilters = async (req, res) => {
     return res.status(500).json({
       error: 'Failed to fetch jobs from Detrack',
       details: error.response?.data?.message || error.message
+    });
+  }
+};
+// ===== CANCEL JOB =====
+exports.cancelJob = async (req, res) => {
+  try {
+    const { doNumber } = req.params;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const userGroupId = req.user.group_id;
+
+    if (!doNumber) {
+      return res.status(400).json({ error: 'DO number is required' });
+    }
+
+    console.log(`🚫 Cancelling job: ${doNumber} by user ${userId}`);
+
+    // 1. Check if job exists in Detrack
+    let detrackJob = null;
+    try {
+      detrackJob = await DetrackService.getJobByDoNumber(doNumber);
+    } catch (error) {
+      console.error('Error fetching job from Detrack:', error.message);
+    }
+
+    // 2. Check if job exists in database
+    let job = await Job.findByDoNumberAny(doNumber);
+
+    // 3. If job doesn't exist in either, return error
+    if (!job && !detrackJob) {
+      return res.status(404).json({ 
+        error: 'Job not found',
+        message: `No job found with DO number: ${doNumber}`
+      });
+    }
+
+    // 4. Check if job is already completed or cancelled
+    const currentStatus = job?.status || detrackJob?.status || detrackJob?.primary_job_status || '';
+    
+    if (currentStatus === 'completed' || currentStatus === 'delivered') {
+      return res.status(400).json({
+        error: 'Cannot cancel completed job',
+        message: `Job ${doNumber} is already ${currentStatus}`
+      });
+    }
+
+    if (currentStatus === 'cancelled') {
+      return res.status(400).json({
+        error: 'Job already cancelled',
+        message: `Job ${doNumber} is already cancelled`
+      });
+    }
+
+    // 5. Cancel in Detrack (if job exists there)
+    let detrackResult = null;
+    if (detrackJob) {
+      try {
+        detrackResult = await DetrackService.cancelJob(doNumber);
+        console.log(`✅ Job ${doNumber} cancelled in Detrack`);
+      } catch (detrackError) {
+        console.error('❌ Failed to cancel in Detrack:', detrackError.message);
+        // Continue with database update even if Detrack fails
+      }
+    }
+
+    // 6. Update or create job in database with cancelled status
+    if (job) {
+      await Job.updateStatus(doNumber, 'cancelled');
+      console.log(`✅ Job ${doNumber} status updated to cancelled in database`);
+    } else if (detrackJob) {
+      // Create job record if it doesn't exist (sync from Detrack)
+      const jobData = {
+        do_number: doNumber,
+        customer_name: detrackJob.deliver_to_collect_from || detrackJob.deliver_to || 'Unknown',
+        customer_company: detrackJob.company_name || '',
+        phone: detrackJob.phone || detrackJob.phone_number || '',
+        delivery_address: detrackJob.address || '',
+        postcode: detrackJob.postal_code || '',
+        recipient_name: detrackJob.deliver_to_collect_from || detrackJob.deliver_to || 'Unknown',
+        recipient_phone: detrackJob.phone || detrackJob.phone_number || '',
+        boxes: detrackJob.number_of_shipping_labels || detrackJob.cartons || detrackJob.boxes || 1,
+        weight: detrackJob.weight || 0,
+        contents: detrackJob.note || '',
+        status: 'cancelled',
+        scheduled_date: detrackJob.date || new Date().toISOString().split('T')[0],
+        special_instructions: detrackJob.instructions || '',
+        barcodes: [],
+        detrack_id: detrackJob.id || '',
+        source: 'detrack_sync',
+        group_name: detrackJob.group_name || '',
+        group_id: detrackJob.group_id || '',
+        pickup_address: '',
+        user_id: userId,
+        state: detrackJob.state || '',
+        city: detrackJob.city || ''
+      };
+      await Job.create(jobData);
+      console.log(`✅ Job ${doNumber} created in database with cancelled status`);
+    }
+
+    res.json({
+      success: true,
+      message: `Job ${doNumber} cancelled successfully`,
+      do_number: doNumber,
+      status: 'cancelled',
+      detrack_synced: !!detrackResult
+    });
+
+  } catch (error) {
+    console.error('❌ Cancel job error:', error);
+    res.status(500).json({
+      error: 'Failed to cancel job',
+      details: error.message
+    });
+  }
+};
+
+// src/controllers/jobController.js - Update Job
+
+exports.updateJob = async (req, res) => {
+  try {
+    const { doNumber } = req.params;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const userGroupId = req.user.group_id;
+    const updateData = req.body;
+
+    if (!doNumber) {
+      return res.status(400).json({ error: 'DO number is required' });
+    }
+
+    console.log(`✏️ Updating job: ${doNumber} by user ${userId}`);
+    console.log('📦 Received update data:', JSON.stringify(updateData, null, 2));
+
+    // 1. Check if job exists in Detrack
+    let detrackJob = null;
+    try {
+      detrackJob = await DetrackService.getJobByDoNumber(doNumber);
+    } catch (error) {
+      console.error('Error fetching job from Detrack:', error.message);
+    }
+
+    if (!detrackJob) {
+      return res.status(404).json({ 
+        error: 'Job not found in Detrack',
+        message: `No job found with DO number: ${doNumber}`
+      });
+    }
+
+    // 2. Check if job is completed (cannot update completed jobs)
+    const currentStatus = detrackJob.status || detrackJob.primary_job_status || '';
+    if (currentStatus === 'completed' || currentStatus === 'delivered') {
+      return res.status(400).json({
+        error: 'Cannot update completed job',
+        message: `Job ${doNumber} is already ${currentStatus}`
+      });
+    }
+
+    if (currentStatus === 'cancelled') {
+      return res.status(400).json({
+        error: 'Cannot update cancelled job',
+        message: `Job ${doNumber} is already cancelled`
+      });
+    }
+
+    // 3. Build update payload with CORRECT field mappings
+    const payload = {};
+    
+    // Address fields
+    if (updateData.address) payload.address = updateData.address;
+    if (updateData.address_1) payload.address_1 = updateData.address_1;
+    if (updateData.address_2) payload.address_2 = updateData.address_2;
+    if (updateData.city) payload.city = updateData.city;
+    if (updateData.state) payload.state = updateData.state;
+    if (updateData.postal_code) payload.postal_code = updateData.postal_code;
+    if (updateData.country) payload.country = updateData.country;
+    
+    // Recipient fields
+    if (updateData.deliver_to) payload.deliver_to = updateData.deliver_to;
+    
+    // 👇 FIX: Use 'phone_number' for Detrack
+    if (updateData.phone) payload.phone_number = updateData.phone;
+    
+    if (updateData.instructions) payload.instructions = updateData.instructions;
+    if (updateData.company_name) payload.company_name = updateData.company_name;
+    if (updateData.notify_email) payload.notify_email = updateData.notify_email;
+    if (updateData.time_window) payload.time_window = updateData.time_window;
+    if (updateData.date) payload.date = updateData.date;
+    if (updateData.weight) payload.weight = parseFloat(updateData.weight);
+    
+    // 👇 FIX: Use 'number_of_shipping_labels' for Detrack
+    if (updateData.boxes) payload.number_of_shipping_labels = parseInt(updateData.boxes);
+    if (updateData.cartons) payload.cartons = parseInt(updateData.cartons);
+    
+    // Also set boxes for Detrack (some versions use this)
+    if (updateData.boxes) payload.boxes = String(parseInt(updateData.boxes));
+
+    // Log what we're sending
+    console.log('📤 Detrack update payload:', JSON.stringify(payload, null, 2));
+
+    // 4. Update in Detrack
+    const detrackResult = await DetrackService.updateJob(doNumber, payload);
+    console.log(`✅ Job ${doNumber} updated in Detrack`);
+
+    // 5. Update in database if exists
+    let job = await Job.findByDoNumberAny(doNumber);
+    if (job) {
+      const dbUpdateData = {
+        customer_name: updateData.deliver_to || detrackJob.deliver_to_collect_from || detrackJob.deliver_to || job.customer_name,
+        customer_company: updateData.company_name || detrackJob.company_name || job.customer_company,
+        phone: updateData.phone || detrackJob.phone_number || detrackJob.phone || job.phone,
+        delivery_address: updateData.address || detrackJob.address || job.delivery_address,
+        postcode: updateData.postal_code || detrackJob.postal_code || job.postcode,
+        recipient_name: updateData.deliver_to || detrackJob.deliver_to_collect_from || detrackJob.deliver_to || job.recipient_name,
+        recipient_phone: updateData.phone || detrackJob.phone_number || detrackJob.phone || job.recipient_phone,
+        scheduled_date: updateData.date || detrackJob.date || job.scheduled_date,
+        special_instructions: updateData.instructions || detrackJob.instructions || job.special_instructions,
+        boxes: updateData.boxes || job.boxes || detrackJob.number_of_shipping_labels || detrackJob.cartons || 1,
+        weight: updateData.weight || job.weight || detrackJob.weight || 0,
+        contents: job.contents || detrackJob.note || '',
+        status: job.status || detrackJob.status || detrackJob.primary_job_status || 'pending',
+        barcodes: job.barcodes || [],
+        group_name: job.group_name || detrackJob.group_name || '',
+        group_id: job.group_id || detrackJob.group_id || '',
+        state: updateData.state || detrackJob.state || job.state || '',
+        city: updateData.city || detrackJob.city || job.city || '',
+        country: updateData.country || detrackJob.country || job.country || 'Australia',
+        address_1: updateData.address_1 || detrackJob.address_1 || job.address_1 || '',
+        address_2: updateData.address_2 || detrackJob.address_2 || job.address_2 || '',
+      };
+      
+      await Job.update(doNumber, dbUpdateData);
+      console.log(`✅ Job ${doNumber} updated in database`);
+    }
+
+    // 6. Return success response
+    res.json({
+      success: true,
+      message: `Job ${doNumber} updated successfully`,
+      do_number: doNumber,
+      updated_fields: payload
+    });
+
+  } catch (error) {
+    console.error('❌ Update job error:', error);
+    res.status(500).json({
+      error: 'Failed to update job',
+      details: error.message
     });
   }
 };

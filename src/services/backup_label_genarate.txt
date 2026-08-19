@@ -1,0 +1,3314 @@
+// src/services/labelService.js
+
+const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
+const QRCode = require('qrcode');
+const { createCanvas } = require('canvas');
+const JsBarcode = require('jsbarcode');
+const path = require('path');
+const fs = require('fs');
+
+/*
+|--------------------------------------------------------------------------
+| 10 x 15 CM SHIPPING LABEL
+|--------------------------------------------------------------------------
+|
+| PDF points:
+| 1 cm = 28.3464567 points
+|
+| 10 cm = 283.464567
+| 15 cm = 425.196850
+|
+|--------------------------------------------------------------------------
+*/
+
+/* --------------------------------------------------------------------------
+ * COLORS
+ * ------------------------------------------------------------------------ */
+
+const BLACK = rgb(0, 0, 0);
+const WHITE = rgb(1, 1, 1);
+const GRAY = rgb(0.25, 0.25, 0.25);
+const LIGHT_GRAY = rgb(0.55, 0.55, 0.55);
+
+
+/* --------------------------------------------------------------------------
+ * PAGE SIZE
+ * ------------------------------------------------------------------------ */
+
+const CM = 28.3464567;
+
+const LABEL_WIDTH = 10 * CM;
+const LABEL_HEIGHT = 15 * CM;
+
+
+/* --------------------------------------------------------------------------
+ * LAYOUT CONFIGURATIONS
+ * ------------------------------------------------------------------------ */
+
+const layouts = {
+
+  /*
+   * Existing A4 layouts are retained so existing code does not break.
+   */
+
+  '4-per-page': {
+    labelsPerPage: 4,
+    cols: 2,
+    rows: 2,
+    marginX: 18,
+    marginY: 30,
+    gapX: 15,
+    gapY: 20,
+    labelWidth: 270,
+    labelHeight: 380,
+    pageWidth: 595.28,
+    pageHeight: 841.89,
+    isA4Layout: true,
+    scale: 1.0,
+  },
+
+  '6-per-page': {
+    labelsPerPage: 6,
+    cols: 2,
+    rows: 3,
+    marginX: 15,
+    marginY: 20,
+    gapX: 12,
+    gapY: 15,
+    labelWidth: 275,
+    labelHeight: 245,
+    pageWidth: 595.28,
+    pageHeight: 841.89,
+    isA4Layout: true,
+    scale: 0.7,
+  },
+
+  '8-per-page-1': {
+    labelsPerPage: 8,
+    cols: 2,
+    rows: 4,
+    marginX: 12,
+    marginY: 15,
+    gapX: 10,
+    gapY: 12,
+    labelWidth: 280,
+    labelHeight: 185,
+    pageWidth: 595.28,
+    pageHeight: 841.89,
+    isA4Layout: true,
+    scale: 0.55,
+  },
+
+  '8-per-page-2': {
+    labelsPerPage: 8,
+    cols: 2,
+    rows: 4,
+    marginX: 12,
+    marginY: 15,
+    gapX: 10,
+    gapY: 12,
+    labelWidth: 280,
+    labelHeight: 185,
+    pageWidth: 595.28,
+    pageHeight: 841.89,
+    isA4Layout: true,
+    scale: 0.6,
+  },
+
+  /*
+   * EXACT 10 x 10 CM
+   */
+  '10x10': {
+    labelsPerPage: 1,
+    cols: 1,
+    rows: 1,
+    marginX: 0,
+    marginY: 0,
+    gapX: 0,
+    gapY: 0,
+    labelWidth: 10 * CM,
+    labelHeight: 10 * CM,
+    pageWidth: 10 * CM,
+    pageHeight: 10 * CM,
+    isA4Layout: false,
+    scale: 1,
+  },
+
+  /*
+   * EXACT 10 x 15 CM
+   */
+  '10x15': {
+    labelsPerPage: 1,
+    cols: 1,
+    rows: 1,
+    marginX: 0,
+    marginY: 0,
+    gapX: 0,
+    gapY: 0,
+    labelWidth: LABEL_WIDTH,
+    labelHeight: LABEL_HEIGHT,
+    pageWidth: LABEL_WIDTH,
+    pageHeight: LABEL_HEIGHT,
+    isA4Layout: false,
+    scale: 1,
+  },
+
+  /*
+   * 7.6 x 5 CM
+   */
+  '7.6x5': {
+    labelsPerPage: 1,
+    cols: 1,
+    rows: 1,
+    marginX: 0,
+    marginY: 0,
+    gapX: 0,
+    gapY: 0,
+    labelWidth: 7.6 * CM,
+    labelHeight: 5 * CM,
+    pageWidth: 7.6 * CM,
+    pageHeight: 5 * CM,
+    isA4Layout: false,
+    scale: 0.6,
+  },
+};
+
+
+/* --------------------------------------------------------------------------
+ * HELPER: DRAW HORIZONTAL LINE
+ * ------------------------------------------------------------------------ */
+
+const drawHorizontalLine = (page, x1, x2, y, width = 0.8) => {
+  page.drawLine({
+    start: {
+      x: x1,
+      y,
+    },
+    end: {
+      x: x2,
+      y,
+    },
+    thickness: width,
+    color: BLACK,
+  });
+};
+
+
+/* --------------------------------------------------------------------------
+ * HELPER: DRAW VERTICAL LINE
+ * ------------------------------------------------------------------------ */
+
+const drawVerticalLine = (page, x, y1, y2, width = 0.8) => {
+  page.drawLine({
+    start: {
+      x,
+      y: y1,
+    },
+    end: {
+      x,
+      y: y2,
+    },
+    thickness: width,
+    color: BLACK,
+  });
+};
+
+
+/* --------------------------------------------------------------------------
+ * HELPER: CENTER TEXT
+ * ------------------------------------------------------------------------ */
+
+const drawCenteredText = (
+  page,
+  text,
+  centerX,
+  y,
+  options
+) => {
+
+  const {
+    font,
+    size,
+    color = BLACK,
+  } = options;
+
+  const textWidth = font.widthOfTextAtSize(text, size);
+
+  page.drawText(text, {
+    x: centerX - textWidth / 2,
+    y,
+    size,
+    font,
+    color,
+  });
+};
+
+
+/* --------------------------------------------------------------------------
+ * HELPER: RIGHT ALIGN TEXT
+ * ------------------------------------------------------------------------ */
+
+const drawRightText = (
+  page,
+  text,
+  rightX,
+  y,
+  options
+) => {
+
+  const {
+    font,
+    size,
+    color = BLACK,
+  } = options;
+
+  const textWidth = font.widthOfTextAtSize(text, size);
+
+  page.drawText(text, {
+    x: rightX - textWidth,
+    y,
+    size,
+    font,
+    color,
+  });
+};
+
+
+/* --------------------------------------------------------------------------
+ * HELPER: WRAP TEXT BY ACTUAL PDF WIDTH
+ * ------------------------------------------------------------------------ */
+
+const wrapText = (
+  text,
+  font,
+  fontSize,
+  maxWidth
+) => {
+
+  if (!text) {
+    return [];
+  }
+
+  const words = String(text)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ');
+
+  const lines = [];
+
+  /*
+   * Break very long words/values by character so that even a single
+   * long address, email, reference or phone value cannot run outside
+   * the available box.
+   */
+  const breakLongWord = (word) => {
+    const chunks = [];
+    let current = '';
+
+    for (const character of String(word)) {
+      const test = current + character;
+
+      if (
+        !current ||
+        font.widthOfTextAtSize(test, fontSize) <= maxWidth
+      ) {
+        current = test;
+      } else {
+        chunks.push(current);
+        current = character;
+      }
+    }
+
+    if (current) {
+      chunks.push(current);
+    }
+
+    return chunks;
+  };
+
+  let currentLine = '';
+
+  for (const word of words) {
+
+    /*
+     * If the individual word itself is wider than the box,
+     * split it into smaller pieces first.
+     */
+    const wordParts =
+      font.widthOfTextAtSize(word, fontSize) > maxWidth
+        ? breakLongWord(word)
+        : [word];
+
+    for (const part of wordParts) {
+
+      const testLine = currentLine
+        ? `${currentLine} ${part}`
+        : part;
+
+      const width = font.widthOfTextAtSize(
+        testLine,
+        fontSize
+      );
+
+      if (width <= maxWidth) {
+        currentLine = testLine;
+      } else {
+
+        if (currentLine) {
+          lines.push(currentLine);
+        }
+
+        /*
+         * A part created by breakLongWord should always fit.
+         */
+        currentLine = part;
+      }
+    }
+  }
+
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+
+  return lines;
+};
+
+
+/* --------------------------------------------------------------------------
+ * HELPER: FIT SINGLE-LINE TEXT TO WIDTH
+ * ------------------------------------------------------------------------ */
+
+const fitTextSize = (
+  text,
+  font,
+  maxWidth,
+  maxSize,
+  minSize = 5,
+  step = 0.25
+) => {
+
+  const value = String(text || '').trim();
+
+  if (!value) {
+    return maxSize;
+  }
+
+  let size = maxSize;
+
+  while (
+    size > minSize &&
+    font.widthOfTextAtSize(value, size) > maxWidth
+  ) {
+    size -= step;
+  }
+
+  return Math.max(minSize, Number(size.toFixed(2)));
+};
+
+
+/* --------------------------------------------------------------------------
+ * HELPER: FIT WRAPPED TEXT TO WIDTH + NUMBER OF LINES + HEIGHT
+ * ------------------------------------------------------------------------ */
+
+const fitWrappedText = (
+  text,
+  font,
+  maxWidth,
+  maxHeight,
+  maxSize,
+  minSize = 5,
+  maxLines = Infinity,
+  lineHeightFactor = 1.2
+) => {
+
+  const value = String(text || '').trim();
+
+  if (!value) {
+    return {
+      size: maxSize,
+      lines: [],
+      lineHeight: maxSize * lineHeightFactor,
+    };
+  }
+
+  let size = maxSize;
+
+  while (size >= minSize) {
+
+    const lines = wrapText(
+      value,
+      font,
+      size,
+      maxWidth
+    );
+
+    const lineHeight = size * lineHeightFactor;
+    const totalHeight = lines.length * lineHeight;
+
+    if (
+      lines.length <= maxLines &&
+      totalHeight <= maxHeight
+    ) {
+      return {
+        size: Number(size.toFixed(2)),
+        lines,
+        lineHeight,
+      };
+    }
+
+    size -= 0.25;
+  }
+
+  const finalSize = minSize;
+
+  const finalLines = wrapText(
+    value,
+    font,
+    finalSize,
+    maxWidth
+  );
+
+  return {
+    size: finalSize,
+    lines: finalLines,
+    lineHeight: finalSize * lineHeightFactor,
+  };
+};
+
+
+/* --------------------------------------------------------------------------
+ * GENERATE CODE128 BARCODE
+ * ------------------------------------------------------------------------ */
+
+const generateBarcode = async (text) => {
+
+  try {
+
+    const canvas = createCanvas(900, 220);
+
+    JsBarcode(canvas, String(text), {
+
+      format: 'CODE128',
+
+      width: 2.5,
+
+      height: 130,
+
+      displayValue: true,
+
+      fontSize:
+        String(text).length > 28
+          ? 22
+          : String(text).length > 20
+            ? 26
+            : 32,
+
+      font: 'Arial',
+
+      textAlign: 'center',
+
+      textPosition: 'bottom',
+
+      textMargin: 8,
+
+      background: '#ffffff',
+
+      lineColor: '#000000',
+
+      margin: 8,
+
+    });
+
+    return canvas.toBuffer('image/png');
+
+  } catch (error) {
+
+    console.error(
+      'Error generating barcode:',
+      error
+    );
+
+    return null;
+  }
+};
+
+
+/* --------------------------------------------------------------------------
+ * GENERATE QR CODE
+ * ------------------------------------------------------------------------ */
+
+const generateQRCode = async (text) => {
+
+  try {
+
+    const qrBuffer = await QRCode.toBuffer(
+      String(text),
+      {
+        type: 'png',
+
+        width: 400,
+
+        margin: 1,
+
+        errorCorrectionLevel: 'M',
+
+        color: {
+          dark: '#000000',
+          light: '#ffffff',
+        },
+      }
+    );
+
+    return qrBuffer;
+
+  } catch (error) {
+
+    console.error(
+      'Error generating QR code:',
+      error
+    );
+
+    return null;
+  }
+};
+
+
+/* --------------------------------------------------------------------------
+ * LOAD LOGO
+ * ------------------------------------------------------------------------ */
+
+const loadLogo = async (pdfDoc) => {
+
+  try {
+
+    const logoPath = path.join(
+      __dirname,
+      '../../logo.png'
+    );
+
+    if (!fs.existsSync(logoPath)) {
+      return null;
+    }
+
+    const logoBuffer =
+      fs.readFileSync(logoPath);
+
+    return await pdfDoc.embedPng(
+      logoBuffer
+    );
+
+  } catch (error) {
+
+    console.error(
+      'Error loading logo:',
+      error
+    );
+
+    return null;
+  }
+};
+
+
+/* --------------------------------------------------------------------------
+ * DRAW TOP SECTION
+ * ------------------------------------------------------------------------ */
+
+const drawTopSection = async (
+  page,
+  pdfDoc,
+  x,
+  y,
+  width,
+  height,
+  barcodeText,
+  fonts
+) => {
+
+  const {
+    font,
+    fontBold,
+  } = fonts;
+
+  const left = x;
+  const right = x + width;
+  const top = y + height;
+  const bottom = y;
+
+  page.drawRectangle({
+    x,
+    y,
+    width,
+    height,
+    borderColor: BLACK,
+    borderWidth: 0.8,
+    color: WHITE,
+  });
+
+  const dividerX =
+    x + width * 0.60;
+
+  drawVerticalLine(
+    page,
+    dividerX,
+    bottom,
+    top,
+    0.8
+  );
+
+  const qrBuffer =
+    await generateQRCode(
+      barcodeText
+    );
+
+  if (qrBuffer) {
+
+    try {
+
+      const qrImage =
+        await pdfDoc.embedPng(
+          qrBuffer
+        );
+
+      const rightSectionWidth =
+        right - dividerX;
+
+      const qrSize = Math.min(
+        76,
+        rightSectionWidth - 20,
+        height - 16
+      );
+
+      const qrX =
+        dividerX +
+        (rightSectionWidth - qrSize) / 2;
+
+      const qrY =
+        bottom +
+        (height - qrSize) / 2;
+
+      page.drawImage(qrImage, {
+        x: qrX,
+        y: qrY,
+        width: qrSize,
+        height: qrSize,
+      });
+
+    } catch (error) {
+
+      console.error(
+        'Error embedding QR code:',
+        error
+      );
+    }
+  }
+
+  return {
+    dividerX,
+  };
+};
+
+
+/* --------------------------------------------------------------------------
+ * DRAW CUSTOMER NAME
+ * ------------------------------------------------------------------------ */
+
+const drawCustomerNameSection = (
+  page,
+  x,
+  y,
+  width,
+  height,
+  customerName,
+  fonts
+) => {
+
+  const {
+    fontBold,
+  } = fonts;
+
+  page.drawRectangle({
+    x,
+    y,
+    width,
+    height,
+    borderColor: BLACK,
+    borderWidth: 0.8,
+    color: WHITE,
+  });
+
+  const name =
+    String(customerName || 'Customer')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const paddingX = 8;
+
+  const maxWidth =
+    width - paddingX * 2;
+
+  const fontSize = fitTextSize(
+    name,
+    fontBold,
+    maxWidth,
+    18,
+    7
+  );
+
+  drawCenteredText(
+    page,
+    name,
+    x + width / 2,
+    y + (height - fontSize) / 2 + 2,
+    {
+      font: fontBold,
+      size: fontSize,
+      color: BLACK,
+    }
+  );
+};
+
+
+/* --------------------------------------------------------------------------
+ * DRAW ADDRESS / CONTACT SECTION
+ * ------------------------------------------------------------------------ */
+
+const drawAddressSection = (
+  page,
+  x,
+  y,
+  width,
+  height,
+  data,
+  fonts,
+  logoImage
+) => {
+
+  const {
+    font,
+    fontBold,
+  } = fonts;
+
+  const {
+    address,
+    companyName,
+    phone,
+    state,
+    postcode,
+    city,
+  } = data;
+
+  page.drawRectangle({
+    x,
+    y,
+    width,
+    height,
+    borderColor: BLACK,
+    borderWidth: 0.8,
+    color: WHITE,
+  });
+
+  const logoSectionWidth = 92;
+
+  const contentWidth =
+    width - logoSectionWidth;
+
+  drawVerticalLine(
+    page,
+    x + contentWidth,
+    y,
+    y + height,
+    0.8
+  );
+
+  const paddingX = 8;
+  const paddingTop = 8;
+  const paddingBottom = 6;
+
+  const textX =
+    x + paddingX;
+
+  const availableTextWidth =
+    contentWidth - paddingX * 2;
+
+  const availableTextHeight =
+    height -
+    paddingTop -
+    paddingBottom;
+
+  const cleanCompany =
+    companyName
+      ? String(companyName)
+          .replace(/\s+/g, ' ')
+          .trim()
+      : '';
+
+  const cleanAddress =
+    address
+      ? String(address)
+          .replace(/\s+/g, ' ')
+          .trim()
+      : '';
+
+  const cleanPhone =
+    phone
+      ? String(phone)
+          .replace(/\s+/g, ' ')
+          .trim()
+      : '';
+
+  const locationParts = [];
+
+  if (city) {
+    locationParts.push(
+      String(city).trim()
+    );
+  }
+
+  if (state) {
+    locationParts.push(
+      String(state).trim()
+    );
+  }
+
+  if (postcode) {
+    locationParts.push(
+      String(postcode).trim()
+    );
+  }
+
+  const locationText =
+    locationParts
+      .filter(Boolean)
+      .join(' ');
+
+  let companySize =
+    cleanCompany ? 8.5 : 0;
+
+  let addressSize =
+    cleanAddress ? 11 : 0;
+
+  let locationSize =
+    locationText ? 8.5 : 0;
+
+  let phoneSize =
+    cleanPhone ? 11 : 0;
+
+  const calculateContent = () => {
+
+    const addressLines =
+      cleanAddress
+        ? wrapText(
+            cleanAddress,
+            fontBold,
+            addressSize,
+            availableTextWidth
+          )
+        : [];
+
+    const companyLines =
+      cleanCompany
+        ? wrapText(
+            cleanCompany,
+            fontBold,
+            companySize,
+            availableTextWidth
+          )
+        : [];
+
+    const locationLines =
+      locationText
+        ? wrapText(
+            locationText,
+            fontBold,
+            locationSize,
+            availableTextWidth
+          )
+        : [];
+
+    const phoneLines =
+      cleanPhone
+        ? wrapText(
+            cleanPhone,
+            fontBold,
+            phoneSize,
+            availableTextWidth
+          )
+        : [];
+
+    const companyLineCount =
+      companyLines.length;
+
+    const addressLineCount =
+      addressLines.length;
+
+    const locationLineCount =
+      locationLines.length;
+
+    const phoneLineCount =
+      phoneLines.length;
+
+    const companyHeight =
+      companyLineCount > 0
+        ? companyLineCount *
+          companySize *
+          1.12
+        : 0;
+
+    const addressHeight =
+      addressLineCount > 0
+        ? addressLineCount *
+          addressSize *
+          1.12
+        : 0;
+
+    const locationHeight =
+      locationLineCount > 0
+        ? locationLineCount *
+          locationSize *
+          1.15
+        : 0;
+
+    const phoneHeight =
+      phoneLineCount > 0
+        ? phoneLineCount *
+          phoneSize *
+          1.12
+        : 0;
+
+    const groupGaps =
+      Math.max(
+        0,
+        companyLineCount
+      ) +
+      Math.max(
+        0,
+        addressLineCount
+      ) +
+      Math.max(
+        0,
+        locationLineCount
+      );
+
+    const totalHeight =
+      companyHeight +
+      addressHeight +
+      locationHeight +
+      phoneHeight +
+      groupGaps * 1.2;
+
+    return {
+      companyLines,
+      addressLines,
+      locationLines,
+      phoneLines,
+      companyLineCount,
+      addressLineCount,
+      locationLineCount,
+      phoneLineCount,
+      totalHeight,
+    };
+  };
+
+  let content =
+    calculateContent();
+
+  while (
+    content.totalHeight >
+      availableTextHeight &&
+    (
+      addressSize > 5.5 ||
+      phoneSize > 7 ||
+      locationSize > 6.5
+    )
+  ) {
+
+    if (
+      addressSize >= phoneSize &&
+      addressSize > 5.5
+    ) {
+
+      addressSize -= 0.25;
+
+    } else if (phoneSize > 7) {
+
+      phoneSize -= 0.25;
+
+    } else if (
+      locationSize > 6.5
+    ) {
+
+      locationSize -= 0.25;
+
+    } else if (
+      addressSize > 5.5
+    ) {
+
+      addressSize -= 0.25;
+    }
+
+    content =
+      calculateContent();
+  }
+
+  if (cleanCompany) {
+
+    companySize = fitTextSize(
+      cleanCompany,
+      fontBold,
+      availableTextWidth,
+      companySize || 8.5,
+      5.5
+    );
+  }
+
+  content =
+    calculateContent();
+
+  let textY =
+    y +
+    height -
+    paddingTop -
+    companySize;
+
+  if (cleanCompany) {
+
+    const companyLines =
+      wrapText(
+        cleanCompany,
+        fontBold,
+        companySize,
+        availableTextWidth
+      );
+
+    for (
+      const line of companyLines
+    ) {
+
+      page.drawText(
+        line,
+        {
+          x: textX,
+          y: textY,
+          size: companySize,
+          font: fontBold,
+          color: BLACK,
+        }
+      );
+
+      textY -=
+        companySize * 1.12;
+    }
+
+    textY -= 1.2;
+  }
+
+  if (cleanAddress) {
+
+    const addressLines =
+      wrapText(
+        cleanAddress,
+        fontBold,
+        addressSize,
+        availableTextWidth
+      );
+
+    for (
+      const line of addressLines
+    ) {
+
+      page.drawText(
+        line,
+        {
+          x: textX,
+          y: textY,
+          size: addressSize,
+          font: fontBold,
+          color: BLACK,
+        }
+      );
+
+      textY -=
+        addressSize * 1.12;
+    }
+
+    textY -= 1.2;
+  }
+
+  if (locationText) {
+
+    const fittedLocationSize =
+      fitTextSize(
+        locationText,
+        fontBold,
+        availableTextWidth,
+        locationSize,
+        5.5
+      );
+
+    const locationLines =
+      wrapText(
+        locationText,
+        fontBold,
+        fittedLocationSize,
+        availableTextWidth
+      );
+
+    for (
+      const line of locationLines
+    ) {
+
+      page.drawText(
+        line,
+        {
+          x: textX,
+          y: textY,
+          size: fittedLocationSize,
+          font: fontBold,
+          color: BLACK,
+        }
+      );
+
+      textY -=
+        fittedLocationSize * 1.15;
+    }
+
+    textY -= 1.2;
+  }
+
+  if (cleanPhone) {
+
+    const fittedPhoneSize =
+      fitTextSize(
+        cleanPhone,
+        fontBold,
+        availableTextWidth,
+        phoneSize,
+        6.5
+      );
+
+    const phoneLines =
+      wrapText(
+        cleanPhone,
+        fontBold,
+        fittedPhoneSize,
+        availableTextWidth
+      );
+
+    for (
+      const line of phoneLines
+    ) {
+
+      page.drawText(
+        line,
+        {
+          x: textX,
+          y: textY,
+          size: fittedPhoneSize,
+          font: fontBold,
+          color: BLACK,
+        }
+      );
+
+      textY -=
+        fittedPhoneSize * 1.12;
+    }
+  }
+
+  const logoAreaX =
+    x + contentWidth;
+
+  const logoAreaWidth =
+    logoSectionWidth;
+
+  const stateText =
+    state
+      ? String(state).trim()
+      : '';
+
+  if (stateText) {
+
+    const stateAreaHeight =
+      height * 0.54;
+
+    const stateMaxWidth =
+      logoAreaWidth - 12;
+
+    const stateFontSize =
+      fitTextSize(
+        stateText,
+        fontBold,
+        stateMaxWidth,
+        28,
+        9
+      );
+
+    const stateTextHeight =
+      stateFontSize;
+
+    const stateCenterX =
+      logoAreaX +
+      logoAreaWidth / 2;
+
+    const stateY =
+      y +
+      height -
+      stateAreaHeight / 2 -
+      stateTextHeight / 2;
+
+    drawCenteredText(
+      page,
+      stateText,
+      stateCenterX,
+      stateY,
+      {
+        font: fontBold,
+        size: stateFontSize,
+        color: BLACK,
+      }
+    );
+  }
+
+  if (logoImage) {
+
+    try {
+
+      const logoAreaHeight =
+        stateText
+          ? height * 0.46
+          : height;
+
+      const logoAreaY =
+        stateText
+          ? y
+          : y;
+
+      const maxLogoWidth =
+        Math.min(
+          65,
+          logoAreaWidth - 12
+        );
+
+      const maxLogoHeight =
+        stateText
+          ? Math.min(
+              36,
+              logoAreaHeight - 8
+            )
+          : Math.min(
+              45,
+              logoAreaHeight - 8
+            );
+
+      const logoOriginalWidth =
+        logoImage.width;
+
+      const logoOriginalHeight =
+        logoImage.height;
+
+      const logoScale =
+        Math.min(
+          maxLogoWidth /
+            logoOriginalWidth,
+          maxLogoHeight /
+            logoOriginalHeight
+        );
+
+      const logoWidth =
+        logoOriginalWidth *
+        logoScale;
+
+      const logoHeight =
+        logoOriginalHeight *
+        logoScale;
+
+      const logoX =
+        logoAreaX +
+        (
+          logoAreaWidth -
+          logoWidth
+        ) / 2;
+
+      const logoY =
+        logoAreaY +
+        (
+          logoAreaHeight -
+          logoHeight
+        ) / 2;
+
+      page.drawImage(
+        logoImage,
+        {
+          x: logoX,
+          y: logoY,
+          width: logoWidth,
+          height: logoHeight,
+        }
+      );
+
+    } catch (error) {
+
+      console.error(
+        'Error drawing logo:',
+        error
+      );
+    }
+  }
+};
+
+
+/* --------------------------------------------------------------------------
+ * DRAW INSTRUCTIONS
+ * ------------------------------------------------------------------------ */
+
+const drawInstructionsSection = (
+  page,
+  x,
+  y,
+  width,
+  height,
+  instructions,
+  fonts
+) => {
+
+  const {
+    font,
+    fontBold,
+  } = fonts;
+
+  page.drawRectangle({
+    x,
+    y,
+    width,
+    height,
+    borderColor: BLACK,
+    borderWidth: 0.8,
+    color: WHITE,
+  });
+
+  drawCenteredText(
+    page,
+    'INSTRUCTIONS',
+    x + width / 2,
+    y + height - 13,
+    {
+      font: fontBold,
+      size: 9,
+      color: BLACK,
+    }
+  );
+
+  if (
+    instructions &&
+    String(instructions).trim()
+  ) {
+
+    const padding = 9;
+
+    const maxWidth =
+      width - padding * 2;
+
+    const titleSpace = 24;
+
+    const availableHeight =
+      height -
+      titleSpace -
+      5;
+
+    const fitted =
+      fitWrappedText(
+        String(instructions).trim(),
+        font,
+        maxWidth,
+        availableHeight,
+        8.5,
+        5.5,
+        Infinity,
+        1.25
+      );
+
+    let textY =
+      y +
+      height -
+      titleSpace;
+
+    for (
+      const line of fitted.lines
+    ) {
+
+      page.drawText(
+        line,
+        {
+          x: x + padding,
+          y: textY,
+          size: fitted.size,
+          font,
+          color: BLACK,
+        }
+      );
+
+      textY -=
+        fitted.lineHeight;
+    }
+
+  } else {
+
+    drawCenteredText(
+      page,
+      '',
+      x + width / 2,
+      y + height / 2,
+      {
+        font,
+        size: 8,
+      }
+    );
+  }
+};
+
+
+/* --------------------------------------------------------------------------
+ * DRAW DECLARATION + BOX NUMBER
+ * ------------------------------------------------------------------------ */
+
+const drawDeclarationSection = (
+  page,
+  x,
+  y,
+  width,
+  height,
+  data,
+  fonts
+) => {
+
+  const {
+    font,
+    fontBold,
+  } = fonts;
+
+  const {
+    boxNumber,
+    totalBoxes,
+  } = data;
+
+  page.drawRectangle({
+    x,
+    y,
+    width,
+    height,
+    borderColor: BLACK,
+    borderWidth: 0.8,
+    color: WHITE,
+  });
+
+  const rightSectionWidth = 110;
+
+  const leftWidth =
+    width - rightSectionWidth;
+
+  drawVerticalLine(
+    page,
+    x + leftWidth,
+    y,
+    y + height,
+    0.8
+  );
+
+  const heading =
+    'Sender Declaration – Residential Deliveries';
+
+  const headingSize =
+    fitTextSize(
+      heading,
+      fontBold,
+      leftWidth - 8,
+      6.8,
+      5
+    );
+
+  page.drawText(
+    heading,
+    {
+      x: x + 4,
+      y: y + height - 12,
+      size: headingSize,
+      font: fontBold,
+      color: BLACK,
+    }
+  );
+
+  drawHorizontalLine(
+    page,
+    x + 4,
+    x + leftWidth - 4,
+    y + height - 14,
+    0.5
+  );
+
+  const declaration =
+    'The sender acknowledges and authorises that residential deliveries may be left unattended at the delivery address, including at the doorstep or another location deemed safe by the driver, without obtaining a signature.';
+
+  const declarationMaxWidth =
+    leftWidth - 14;
+
+  const declarationAvailableHeight =
+    height - 25 - 5;
+
+  const fitted =
+    fitWrappedText(
+      declaration,
+      font,
+      declarationMaxWidth,
+      declarationAvailableHeight,
+      6.7,
+      4.5,
+      Infinity,
+      1.25
+    );
+
+  let declarationY =
+    y + height - 25;
+
+  for (
+    const line of fitted.lines
+  ) {
+
+    drawCenteredText(
+      page,
+      line,
+      x + leftWidth / 2,
+      declarationY,
+      {
+        font,
+        size: fitted.size,
+        color: BLACK,
+      }
+    );
+
+    declarationY -=
+      fitted.lineHeight;
+  }
+
+  const rightX =
+    x + leftWidth;
+
+  const rightWidth =
+    rightSectionWidth;
+
+  const barcodeText =
+    data.barcodeText || '';
+
+  if (barcodeText) {
+
+    const orderFontSize =
+      fitTextSize(
+        barcodeText,
+        font,
+        rightWidth - 8,
+        7,
+        4.5
+      );
+
+    drawCenteredText(
+      page,
+      barcodeText,
+      rightX + rightWidth / 2,
+      y + height - 17,
+      {
+        font,
+        size: orderFontSize,
+        color: BLACK,
+      }
+    );
+  }
+
+  const boxText =
+    `${boxNumber} of ${totalBoxes}`;
+
+  const boxFontSize =
+    fitTextSize(
+      boxText,
+      fontBold,
+      rightWidth - 8,
+      22,
+      9
+    );
+
+  drawCenteredText(
+    page,
+    boxText,
+    rightX + rightWidth / 2,
+    y + 17,
+    {
+      font: fontBold,
+      size: boxFontSize,
+      color: BLACK,
+    }
+  );
+};
+
+
+/* --------------------------------------------------------------------------
+ * DRAW BARCODE SECTION
+ * ------------------------------------------------------------------------ */
+
+const drawBarcodeSection = async (
+  page,
+  pdfDoc,
+  x,
+  y,
+  width,
+  height,
+  barcodeText
+) => {
+
+  const barcodeBuffer =
+    await generateBarcode(
+      barcodeText
+    );
+
+  if (!barcodeBuffer) {
+    return;
+  }
+
+  try {
+
+    const barcodeImage =
+      await pdfDoc.embedPng(
+        barcodeBuffer
+      );
+
+    const paddingX = 8;
+
+    const barcodeWidth =
+      width - paddingX * 2;
+
+    const barcodeHeight =
+      height - 8;
+
+    page.drawImage(
+      barcodeImage,
+      {
+        x: x + paddingX,
+        y: y + 4,
+        width: barcodeWidth,
+        height: barcodeHeight,
+      }
+    );
+
+  } catch (error) {
+
+    console.error(
+      'Error drawing barcode:',
+      error
+    );
+  }
+};
+
+
+/* --------------------------------------------------------------------------
+ * GENERATE THE 10 x 15 LABEL
+ * ------------------------------------------------------------------------ */
+
+const generate10x15Label = async (
+  page,
+  pdfDoc,
+  data
+) => {
+
+  const width = LABEL_WIDTH;
+  const height = LABEL_HEIGHT;
+
+  const font =
+    await pdfDoc.embedFont(
+      StandardFonts.Helvetica
+    );
+
+  const fontBold =
+    await pdfDoc.embedFont(
+      StandardFonts.HelveticaBold
+    );
+
+  const fonts = {
+    font,
+    fontBold,
+  };
+
+  page.drawRectangle({
+    x: 0,
+    y: 0,
+    width,
+    height,
+    color: WHITE,
+  });
+
+  page.drawRectangle({
+    x: 1.5,
+    y: 1.5,
+    width: width - 3,
+    height: height - 3,
+    borderColor: BLACK,
+    borderWidth: 1.5,
+    color: WHITE,
+  });
+
+  const margin = 9;
+
+  const left =
+    margin;
+
+  const right =
+    width - margin;
+
+  const usableWidth =
+    width - margin * 2;
+
+  const topSectionHeight = 92;
+
+  const nameSectionHeight = 39;
+
+  const addressSectionHeight = 74;
+
+  const instructionsSectionHeight = 55;
+
+  const declarationSectionHeight = 62;
+
+  const barcodeSectionHeight =
+    height -
+    margin * 2 -
+    topSectionHeight -
+    nameSectionHeight -
+    addressSectionHeight -
+    instructionsSectionHeight -
+    declarationSectionHeight;
+
+  let currentTop =
+    height - margin;
+
+  const topSectionY =
+    currentTop -
+    topSectionHeight;
+
+  await drawTopSection(
+    page,
+    pdfDoc,
+    left,
+    topSectionY,
+    usableWidth,
+    topSectionHeight,
+    data.barcodeText,
+    fonts
+  );
+
+  currentTop =
+    topSectionY;
+
+  const nameY =
+    currentTop -
+    nameSectionHeight;
+
+  drawCustomerNameSection(
+    page,
+    left,
+    nameY,
+    usableWidth,
+    nameSectionHeight,
+    data.customerName,
+    fonts
+  );
+
+  currentTop =
+    nameY;
+
+  const addressY =
+    currentTop -
+    addressSectionHeight;
+
+  const logoImage =
+    await loadLogo(pdfDoc);
+
+  drawAddressSection(
+    page,
+    left,
+    addressY,
+    usableWidth,
+    addressSectionHeight,
+    data,
+    fonts,
+    logoImage
+  );
+
+  currentTop =
+    addressY;
+
+  const instructionsY =
+    currentTop -
+    instructionsSectionHeight;
+
+  drawInstructionsSection(
+    page,
+    left,
+    instructionsY,
+    usableWidth,
+    instructionsSectionHeight,
+    data.instructions,
+    fonts
+  );
+
+  currentTop =
+    instructionsY;
+
+  const declarationY =
+    currentTop -
+    declarationSectionHeight;
+
+  drawDeclarationSection(
+    page,
+    left,
+    declarationY,
+    usableWidth,
+    declarationSectionHeight,
+    data,
+    fonts
+  );
+
+  const barcodeY =
+    margin;
+
+  await drawBarcodeSection(
+    page,
+    pdfDoc,
+    left,
+    barcodeY,
+    usableWidth,
+    barcodeSectionHeight,
+    data.barcodeText
+  );
+};
+
+
+/* --------------------------------------------------------------------------
+ * 7.6 x 5 CM LABEL RENDERER
+ *
+ * This renderer is used ONLY by the existing 7.6 x 5 CM label size.
+ * The physical size is NOT changed.
+ * ------------------------------------------------------------------------ */
+
+const generate7_6x5Label = async (
+  page,
+  pdfDoc,
+  data
+) => {
+
+  const width =
+    7.6 * CM;
+
+  const height =
+    5 * CM;
+
+  const font =
+    await pdfDoc.embedFont(
+      StandardFonts.Helvetica
+    );
+
+  const fontBold =
+    await pdfDoc.embedFont(
+      StandardFonts.HelveticaBold
+    );
+
+  const logoImage =
+    await loadLogo(pdfDoc);
+
+  page.drawRectangle({
+    x: 0,
+    y: 0,
+    width,
+    height,
+    color: WHITE,
+  });
+
+  page.drawRectangle({
+    x: 1,
+    y: 1,
+    width: width - 2,
+    height: height - 2,
+    borderColor: BLACK,
+    borderWidth: 0.8,
+    color: WHITE,
+  });
+
+  const left = 2;
+
+  const right =
+    width - 2;
+
+  const top =
+    height - 2;
+
+  const contentWidth =
+    right - left;
+
+
+  /* ------------------------------------------------------------------------
+   * TOP AREA
+   * ------------------------------------------------------------------------ */
+
+  const topHeight = 53;
+
+  const topBottom =
+    top - topHeight;
+
+  const qrDividerX =
+    left +
+    contentWidth * 0.76;
+
+  drawVerticalLine(
+    page,
+    qrDividerX,
+    topBottom,
+    top,
+    0.6
+  );
+
+  drawHorizontalLine(
+    page,
+    left,
+    right,
+    topBottom,
+    0.6
+  );
+
+  const qrBuffer =
+    await generateQRCode(
+      data.barcodeText
+    );
+
+  if (qrBuffer) {
+
+    try {
+
+      const qrImage =
+        await pdfDoc.embedPng(
+          qrBuffer
+        );
+
+      const qrAreaWidth =
+        right -
+        qrDividerX;
+
+      const qrSize =
+        Math.min(
+          qrAreaWidth - 6,
+          topHeight - 6
+        );
+
+      page.drawImage(
+        qrImage,
+        {
+          x:
+            qrDividerX +
+            (
+              qrAreaWidth -
+              qrSize
+            ) / 2,
+
+          y:
+            topBottom +
+            (
+              topHeight -
+              qrSize
+            ) / 2,
+
+          width: qrSize,
+
+          height: qrSize,
+        }
+      );
+
+    } catch (error) {
+
+      console.error(
+        'Error drawing 7.6x5 QR:',
+        error
+      );
+    }
+  }
+
+  const barcodeBuffer =
+    await generateBarcode(
+      data.barcodeText
+    );
+
+  if (barcodeBuffer) {
+
+    try {
+
+      const barcodeImage =
+        await pdfDoc.embedPng(
+          barcodeBuffer
+        );
+
+      const barcodeAreaWidth =
+        qrDividerX -
+        left;
+
+      page.drawImage(
+        barcodeImage,
+        {
+          x: left + 5,
+          y: topBottom + 5,
+          width:
+            barcodeAreaWidth - 10,
+          height:
+            topHeight - 10,
+        }
+      );
+
+    } catch (error) {
+
+      console.error(
+        'Error drawing 7.6x5 barcode:',
+        error
+      );
+    }
+  }
+
+
+  /* ------------------------------------------------------------------------
+   * CUSTOMER NAME
+   * ------------------------------------------------------------------------ */
+
+  const nameHeight = 24;
+
+  const nameBottom =
+    topBottom -
+    nameHeight;
+
+  drawHorizontalLine(
+    page,
+    left,
+    right,
+    nameBottom,
+    0.6
+  );
+
+  const customerName =
+    String(
+      data.customerName ||
+      'Customer'
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const nameSize =
+    fitTextSize(
+      customerName,
+      fontBold,
+      contentWidth - 10,
+      17,
+      7
+    );
+
+  drawCenteredText(
+    page,
+    customerName,
+    width / 2,
+    nameBottom +
+      (
+        nameHeight -
+        nameSize
+      ) / 2 +
+      1,
+    {
+      font: fontBold,
+      size: nameSize,
+      color: BLACK,
+    }
+  );
+
+
+  /* ------------------------------------------------------------------------
+   * LOWER AREA
+   * ------------------------------------------------------------------------ */
+
+  const lowerBottom = 2;
+
+  const lowerTop =
+    nameBottom;
+
+  const lowerHeight =
+    lowerTop -
+    lowerBottom;
+
+  const rightColumnWidth = 61;
+
+  const dividerX =
+    right -
+    rightColumnWidth;
+
+  drawVerticalLine(
+    page,
+    dividerX,
+    lowerBottom,
+    lowerTop,
+    0.6
+  );
+
+  const boxHeight = 27;
+
+  const stateHeight = 20;
+
+  const logoHeight =
+    Math.max(
+      1,
+      lowerHeight -
+      boxHeight -
+      stateHeight
+    );
+
+  const boxBottom =
+    lowerTop -
+    boxHeight;
+
+  const stateBottom =
+    boxBottom -
+    stateHeight;
+
+  drawHorizontalLine(
+    page,
+    dividerX,
+    right,
+    boxBottom,
+    0.6
+  );
+
+  drawHorizontalLine(
+    page,
+    dividerX,
+    right,
+    stateBottom,
+    0.6
+  );
+
+
+  /* ------------------------------------------------------------------------
+   * BOX NUMBER
+   * ------------------------------------------------------------------------ */
+
+  const boxText =
+    `${data.boxNumber} of ${data.totalBoxes}`;
+
+  const boxSize =
+    fitTextSize(
+      boxText,
+      fontBold,
+      rightColumnWidth - 8,
+      20,
+      8
+    );
+
+  drawCenteredText(
+    page,
+    boxText,
+    dividerX +
+      rightColumnWidth / 2,
+    boxBottom +
+      (
+        boxHeight -
+        boxSize
+      ) / 2 +
+      1,
+    {
+      font: fontBold,
+      size: boxSize,
+      color: BLACK,
+    }
+  );
+
+
+  /* ------------------------------------------------------------------------
+   * STATE
+   * ------------------------------------------------------------------------ */
+
+  const stateText =
+    String(
+      data.state || ''
+    ).trim();
+
+  if (stateText) {
+
+    const stateSize =
+      fitTextSize(
+        stateText,
+        fontBold,
+        rightColumnWidth - 8,
+        19,
+        7
+      );
+
+    drawCenteredText(
+      page,
+      stateText,
+      dividerX +
+        rightColumnWidth / 2,
+      stateBottom +
+        (
+          stateHeight -
+          stateSize
+        ) / 2 +
+        1,
+      {
+        font: fontBold,
+        size: stateSize,
+        color: BLACK,
+      }
+    );
+  }
+
+
+  /* ------------------------------------------------------------------------
+   * LOGO
+   * ------------------------------------------------------------------------ */
+
+  if (logoImage) {
+
+    try {
+
+      const maxLogoWidth =
+        rightColumnWidth - 8;
+
+      const maxLogoHeight =
+        logoHeight - 5;
+
+      const logoScale =
+        Math.min(
+          maxLogoWidth /
+            logoImage.width,
+          maxLogoHeight /
+            logoImage.height
+        );
+
+      const logoWidth =
+        logoImage.width *
+        logoScale;
+
+      const logoDrawHeight =
+        logoImage.height *
+        logoScale;
+
+      page.drawImage(
+        logoImage,
+        {
+          x:
+            dividerX +
+            (
+              rightColumnWidth -
+              logoWidth
+            ) / 2,
+
+          y:
+            lowerBottom +
+            (
+              logoHeight -
+              logoDrawHeight
+            ) / 2,
+
+          width:
+            logoWidth,
+
+          height:
+            logoDrawHeight,
+        }
+      );
+
+    } catch (error) {
+
+      console.error(
+        'Error drawing 7.6x5 logo:',
+        error
+      );
+    }
+  }
+
+
+  /* ------------------------------------------------------------------------
+   * ADDRESS INFORMATION
+   * ------------------------------------------------------------------------ */
+
+  const padding = 5;
+
+  const textX =
+    left + padding;
+
+  const textWidth =
+    dividerX -
+    left -
+    padding * 2;
+
+  const company =
+    String(
+      data.companyName || ''
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const address =
+    String(
+      data.address || ''
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const city =
+    String(
+      data.city || ''
+    ).trim();
+
+  const state =
+    String(
+      data.state || ''
+    ).trim();
+
+  const postcode =
+    String(
+      data.postcode || ''
+    ).trim();
+
+  const phone =
+    String(
+      data.phone || ''
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const locationText = [
+    city,
+    state,
+    postcode,
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  let textY =
+    lowerTop - 7;
+
+  if (company) {
+
+    const size =
+      fitTextSize(
+        company,
+        fontBold,
+        textWidth,
+        8,
+        5
+      );
+
+    page.drawText(
+      company,
+      {
+        x: textX,
+        y: textY - size,
+        size,
+        font: fontBold,
+        color: BLACK,
+      }
+    );
+
+    textY -=
+      size + 1.5;
+  }
+
+  if (address) {
+
+    const size =
+      fitTextSize(
+        address,
+        fontBold,
+        textWidth,
+        10.5,
+        5
+      );
+
+    const lines =
+      wrapText(
+        address,
+        fontBold,
+        size,
+        textWidth
+      );
+
+    for (
+      const line of lines.slice(0, 3)
+    ) {
+
+      page.drawText(
+        line,
+        {
+          x: textX,
+          y: textY - size,
+          size,
+          font: fontBold,
+          color: BLACK,
+        }
+      );
+
+      textY -=
+        size + 0.5;
+    }
+
+    textY -= 1;
+  }
+
+  if (locationText) {
+
+    const size =
+      fitTextSize(
+        locationText,
+        fontBold,
+        textWidth,
+        8.5,
+        5
+      );
+
+    page.drawText(
+      locationText,
+      {
+        x: textX,
+        y: textY - size,
+        size,
+        font: fontBold,
+        color: BLACK,
+      }
+    );
+
+    textY -=
+      size + 1.5;
+  }
+
+  if (phone) {
+
+    const size =
+      fitTextSize(
+        phone,
+        fontBold,
+        textWidth,
+        9,
+        5
+      );
+
+    page.drawText(
+      phone,
+      {
+        x: textX,
+        y: Math.max(
+          lowerBottom + 3,
+          textY - size
+        ),
+        size,
+        font: fontBold,
+        color: BLACK,
+      }
+    );
+  }
+};
+
+
+/* --------------------------------------------------------------------------
+ * GENERIC LABEL RENDERER
+ *
+ * Kept for the other existing layouts.
+ * ------------------------------------------------------------------------ */
+
+const generateLabelOnPage = async (
+  page,
+  x,
+  y,
+  width,
+  height,
+  data
+) => {
+
+  const {
+    doNumber,
+    barcodeText,
+    customerName,
+    address,
+    companyName,
+    boxNumber,
+    totalBoxes,
+    phone,
+    instructions,
+    state,
+    postcode,
+    city,
+    config,
+  } = data;
+
+
+  /*
+   * ONLY the existing 7.6 x 5 CM label
+   * gets the new reference design.
+   *
+   * IMPORTANT:
+   *
+   * - 7.6x5 = changed
+   * - 10x15 = unchanged
+   * - 10x10 = unchanged
+   * - A4 layouts = unchanged
+   */
+
+  const LABEL_7_6_WIDTH =
+    7.6 * CM;
+
+  const LABEL_7_6_HEIGHT =
+    5 * CM;
+
+  if (
+    Math.abs(
+      width -
+      LABEL_7_6_WIDTH
+    ) < 0.1 &&
+    Math.abs(
+      height -
+      LABEL_7_6_HEIGHT
+    ) < 0.1
+  ) {
+
+    await generate7_6x5Label(
+      page,
+      page.doc,
+      data
+    );
+
+    return;
+  }
+
+
+  /*
+   * EXACT 10x15 LABEL
+   *
+   * This remains unchanged.
+   */
+
+  if (
+    Math.abs(
+      width -
+      LABEL_WIDTH
+    ) < 0.1 &&
+    Math.abs(
+      height -
+      LABEL_HEIGHT
+    ) < 0.1
+  ) {
+
+    await generate10x15Label(
+      page,
+      page.doc,
+      data
+    );
+
+    return;
+  }
+
+
+  /*
+   * ------------------------------------------------------------------------
+   * FALLBACK FOR OTHER EXISTING LABEL SIZES
+   * ------------------------------------------------------------------------
+   */
+
+  const font =
+    await page.doc.embedFont(
+      StandardFonts.Helvetica
+    );
+
+  const fontBold =
+    await page.doc.embedFont(
+      StandardFonts.HelveticaBold
+    );
+
+  const scale =
+    config.scale || 1;
+
+  const padding =
+    6 * scale;
+
+  const left =
+    x + padding;
+
+  const right =
+    x + width - padding;
+
+  const top =
+    y + height - padding;
+
+
+  /*
+   * White background.
+   */
+
+  page.drawRectangle({
+    x,
+    y,
+    width,
+    height,
+    color: WHITE,
+  });
+
+
+  /*
+   * Border.
+   */
+
+  page.drawRectangle({
+    x,
+    y,
+    width,
+    height,
+    borderColor: BLACK,
+    borderWidth: 1,
+    color: WHITE,
+  });
+
+
+  /*
+   * Customer.
+   */
+
+  page.drawText(
+    customerName || 'Customer',
+    {
+      x: left,
+      y:
+        top -
+        18 * scale,
+      size:
+        12 * scale,
+      font: fontBold,
+      color: BLACK,
+    }
+  );
+
+
+  /*
+   * Address.
+   */
+
+  let textY =
+    top -
+    34 * scale;
+
+  if (address) {
+
+    const addressLines =
+      wrapText(
+        String(address),
+        font,
+        8 * scale,
+        width -
+          padding * 2
+      );
+
+    for (
+      let i = 0;
+      i <
+      Math.min(
+        addressLines.length,
+        3
+      );
+      i++
+    ) {
+
+      page.drawText(
+        addressLines[i],
+        {
+          x: left,
+          y: textY,
+          size:
+            8 * scale,
+          font,
+          color: BLACK,
+        }
+      );
+
+      textY -=
+        10 * scale;
+    }
+  }
+
+
+  /*
+   * City, State, Postcode.
+   */
+
+  const locationParts = [];
+
+  if (city) {
+    locationParts.push(
+      String(city)
+    );
+  }
+
+  if (state) {
+    locationParts.push(
+      String(state)
+    );
+  }
+
+  if (postcode) {
+    locationParts.push(
+      String(postcode)
+    );
+  }
+
+  if (
+    locationParts.length > 0
+  ) {
+
+    const locationText =
+      locationParts.join(' ');
+
+    page.drawText(
+      locationText,
+      {
+        x: left,
+        y: textY,
+        size:
+          8 * scale,
+        font: fontBold,
+        color: BLACK,
+      }
+    );
+
+    textY -=
+      10 * scale;
+  }
+
+
+  /*
+   * Phone.
+   */
+
+  if (phone) {
+
+    page.drawText(
+      String(phone),
+      {
+        x: left,
+        y: textY,
+        size:
+          8 * scale,
+        font,
+        color: BLACK,
+      }
+    );
+
+    textY -=
+      12 * scale;
+  }
+
+
+  /*
+   * Instructions.
+   */
+
+  if (
+    instructions &&
+    String(instructions).trim()
+  ) {
+
+    page.drawText(
+      'INSTRUCTIONS',
+      {
+        x: left,
+        y: textY,
+        size:
+          7 * scale,
+        font: fontBold,
+        color: BLACK,
+      }
+    );
+
+    textY -=
+      11 * scale;
+
+    const lines =
+      wrapText(
+        String(instructions),
+        font,
+        7 * scale,
+        width -
+          padding * 2
+      );
+
+    for (
+      let i = 0;
+      i <
+      Math.min(
+        lines.length,
+        4
+      );
+      i++
+    ) {
+
+      page.drawText(
+        lines[i],
+        {
+          x: left,
+          y: textY,
+          size:
+            7 * scale,
+          font,
+          color: BLACK,
+        }
+      );
+
+      textY -=
+        9 * scale;
+    }
+  }
+
+
+  /*
+   * Barcode.
+   */
+
+  const barcodeBuffer =
+    await generateBarcode(
+      barcodeText
+    );
+
+  if (barcodeBuffer) {
+
+    try {
+
+      const barcodeImage =
+        await page.doc.embedPng(
+          barcodeBuffer
+        );
+
+      const barcodeWidth =
+        Math.min(
+          width -
+            padding * 2,
+          240 * scale
+        );
+
+      const barcodeHeight =
+        Math.min(
+          65 * scale,
+          height * 0.25
+        );
+
+      page.drawImage(
+        barcodeImage,
+        {
+          x:
+            x +
+            (
+              width -
+              barcodeWidth
+            ) / 2,
+
+          y:
+            y +
+            padding,
+
+          width:
+            barcodeWidth,
+
+          height:
+            barcodeHeight,
+        }
+      );
+
+    } catch (error) {
+
+      console.error(
+        'Error drawing fallback barcode:',
+        error
+      );
+    }
+  }
+
+
+  /*
+   * QR.
+   */
+
+  const qrBuffer =
+    await generateQRCode(
+      barcodeText
+    );
+
+  if (qrBuffer) {
+
+    try {
+
+      const qrImage =
+        await page.doc.embedPng(
+          qrBuffer
+        );
+
+      const qrSize =
+        Math.min(
+          55 * scale,
+          width * 0.25,
+          height * 0.18
+        );
+
+      page.drawImage(
+        qrImage,
+        {
+          x:
+            right -
+            qrSize,
+
+          y:
+            top -
+            qrSize,
+
+          width:
+            qrSize,
+
+          height:
+            qrSize,
+        }
+      );
+
+    } catch (error) {
+
+      console.error(
+        'Error drawing fallback QR:',
+        error
+      );
+    }
+  }
+
+
+  /*
+   * Box number.
+   */
+
+  drawRightText(
+    page,
+    `${boxNumber} of ${totalBoxes}`,
+    right,
+    y +
+      height * 0.40,
+    {
+      font: fontBold,
+      size:
+        10 * scale,
+      color: BLACK,
+    }
+  );
+
+
+  /*
+   * Order number.
+   */
+
+  drawRightText(
+    page,
+    String(doNumber || ''),
+    right,
+    y +
+      height * 0.46,
+    {
+      font,
+      size:
+        7 * scale,
+      color: BLACK,
+    }
+  );
+};
+
+
+/* --------------------------------------------------------------------------
+ * GENERATE SHIPPING LABELS
+ * ------------------------------------------------------------------------ */
+
+const generateShippingLabels = async (
+  doNumber,
+  barcodes,
+  customerName,
+  address,
+  companyName = '',
+  phone = '',
+  instructions = '',
+  layout = '10x15',
+  state = '',
+  postcode = '',
+  city = ''
+) => {
+
+  const pdfDoc =
+    await PDFDocument.create();
+
+
+  /*
+   * Make sure barcodes is always an array.
+   */
+
+  const barcodeList =
+    Array.isArray(barcodes)
+      ? barcodes
+      : [barcodes];
+
+
+  /*
+   * Remove empty barcode values.
+   */
+
+  const validBarcodes =
+    barcodeList.filter(
+      (value) =>
+        value !== undefined &&
+        value !== null &&
+        String(value).trim() !== ''
+    );
+
+
+  /*
+   * Prevent empty PDF generation.
+   */
+
+  if (
+    validBarcodes.length === 0
+  ) {
+
+    throw new Error(
+      'At least one barcode is required to generate a shipping label.'
+    );
+  }
+
+
+  /*
+   * Get selected layout.
+   */
+
+  const config =
+    layouts[layout] ||
+    layouts['10x15'];
+
+
+  const {
+    labelsPerPage,
+    cols,
+    marginX,
+    marginY,
+    gapX,
+    gapY,
+    labelWidth,
+    labelHeight,
+    pageWidth,
+    pageHeight,
+    isA4Layout,
+  } = config;
+
+
+  /*
+   |--------------------------------------------------------------------------
+   | INDIVIDUAL LABEL PAGE
+   |--------------------------------------------------------------------------
+   |
+   | 10x15 is always one label per page.
+   |
+   */
+
+  if (!isA4Layout) {
+
+    for (
+      let i = 0;
+      i < validBarcodes.length;
+      i++
+    ) {
+
+      const page =
+        pdfDoc.addPage([
+          pageWidth,
+          pageHeight,
+        ]);
+
+
+      const labelData = {
+
+        doNumber,
+
+        barcodeText:
+          String(
+            validBarcodes[i]
+          ),
+
+        customerName,
+
+        address,
+
+        companyName,
+
+        boxNumber:
+          i + 1,
+
+        totalBoxes:
+          validBarcodes.length,
+
+        phone,
+
+        instructions,
+
+        state,
+
+        postcode,
+
+        city,
+
+        config,
+      };
+
+
+      await generateLabelOnPage(
+        page,
+        0,
+        0,
+        pageWidth,
+        pageHeight,
+        labelData
+      );
+    }
+
+
+    return pdfDoc;
+  }
+
+
+  /*
+   |--------------------------------------------------------------------------
+   | A4 MULTI-LABEL LAYOUT
+   |--------------------------------------------------------------------------
+   */
+
+  for (
+    let i = 0;
+    i < validBarcodes.length;
+    i++
+  ) {
+
+    const positionInPage =
+      i % labelsPerPage;
+
+    const col =
+      positionInPage % cols;
+
+    const row =
+      Math.floor(
+        positionInPage /
+        cols
+      );
+
+
+    /*
+     * Create a new A4 page.
+     */
+
+    if (
+      i % labelsPerPage === 0
+    ) {
+
+      pdfDoc.addPage([
+        pageWidth,
+        pageHeight,
+      ]);
+    }
+
+
+    const page =
+      pdfDoc.getPages()[
+        pdfDoc.getPages().length - 1
+      ];
+
+
+    const x =
+      marginX +
+      col *
+        (
+          labelWidth +
+          gapX
+        );
+
+
+    const y =
+      pageHeight -
+      marginY -
+      (
+        row + 1
+      ) *
+        labelHeight -
+      row *
+        gapY;
+
+
+    const labelData = {
+
+      doNumber,
+
+      barcodeText:
+        String(
+          validBarcodes[i]
+        ),
+
+      customerName,
+
+      address,
+
+      companyName,
+
+      boxNumber:
+        i + 1,
+
+      totalBoxes:
+        validBarcodes.length,
+
+      phone,
+
+      instructions,
+
+      state,
+
+      postcode,
+
+      city,
+
+      config,
+    };
+
+
+    await generateLabelOnPage(
+      page,
+      x,
+      y,
+      labelWidth,
+      labelHeight,
+      labelData
+    );
+  }
+
+
+  return pdfDoc;
+};
+
+
+/* --------------------------------------------------------------------------
+ * EXPORTS
+ * ------------------------------------------------------------------------ */
+
+module.exports = {
+
+  generateBarcode,
+
+  generateQRCode,
+
+  generateShippingLabels,
+
+  layouts,
+
+};

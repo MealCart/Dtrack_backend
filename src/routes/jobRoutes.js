@@ -9,44 +9,50 @@ const collectionController = require('../controllers/collectionController');
 // All routes require authentication
 router.use(authenticate);
 
-// Database jobs
+// ===== DATABASE JOBS =====
 router.get('/db-jobs', jobController.getJobs);
 router.get('/db-jobs/:id', jobController.getJob);
 
-// Create jobs
+// ===== CREATE JOBS =====
 router.post('/create-job', jobController.createJob);
 router.post('/upload-manifest', upload.single('file'), jobController.uploadManifest);
 
-// Collection upload
+// ===== COLLECTION UPLOAD =====
 router.post('/upload-collection-manifest', upload.single('file'), collectionController.uploadCollectionManifest);
 
-// 👇 Detrack API jobs with filters & pagination
+// ===== DETRACK API JOBS WITH FILTERS & PAGINATION =====
 router.get('/detrack-jobs', jobController.getDetrackJobsWithFilters);
 
-// 👇 Fetch collections from Detrack
+// ===== FETCH COLLECTIONS FROM DETRACK =====
 router.get('/detrack-collections', jobController.getDetrackCollections);
 
-// Detrack API jobs
+// ===== DETRACK API JOBS =====
 router.get('/jobs', jobController.getDetrackJobs);
 router.get('/jobs/:id', jobController.getDetrackJob);
 router.get('/job-by-donumber', jobController.getJobByDoNumber);
 
-// Download POD
+// ===== DOWNLOAD / GENERATE POD =====
 router.get('/download-pod/:doNumber', jobController.downloadPod);
-
-// Generate POD
 router.get('/generate-pod/:doNumber', jobController.generatePod);
 
-// Box scanning routes
+// ===== BOX SCANNING ROUTES =====
 router.get('/box-status/:do_number', jobController.getBoxStatus);
 router.post('/scan-box', jobController.scanBox);
 router.post('/bulk-scan', jobController.bulkScan);
 
-// Dashboard
+// ===== DASHBOARD =====
 router.get('/dashboard-stats', jobController.getDashboardStats);
 
-// Groups
+// ===== GROUPS =====
 router.get('/groups', jobController.getGroups);
 router.get('/groups/search-all', jobController.searchAllGroups);
+
+// ===== 👇 NEW: CANCEL JOB =====
+// Cancel a job (soft delete - updates status to 'cancelled')
+router.put('/jobs/:doNumber/cancel', jobController.cancelJob);
+
+// ===== 👇 NEW: UPDATE JOB =====
+// Update a job (address, recipient, instructions, etc.)
+router.put('/jobs/:doNumber', jobController.updateJob);
 
 module.exports = router;

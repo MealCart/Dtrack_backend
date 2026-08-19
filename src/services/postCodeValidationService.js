@@ -224,7 +224,16 @@ class PostCodeValidationService {
       suburb: 'Unknown',
       requestedDate: this.formatDateFriendly(dateStr),
       requestedDay: dayName,
-      message: `Post code ${postCode} is not in our delivery service area. We do not offer delivery to this location. Please check the post code and try again.`
+      message: `Post code ${postCode} We're sorry, but we currently don't offer delivery services to this location.
+
+📋 Please note: Our delivery area list is for reference only. 
+   Service availability may change at any time.
+
+📞 For assistance, please contact our support team:
+   • Email: support@mealcart.com.au
+   • Phone: +61 492 143 686
+
+We'll be happy to check if we can accommodate your delivery needs.`
     };
   }
 

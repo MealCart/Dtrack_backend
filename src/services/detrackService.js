@@ -1,6 +1,6 @@
 // backend/src/services/detrackService.js
 const axios = require('axios');
-const { DETRACK_API_KEY, DETRACK_API_URL } = require('../config/constants');
+const { DETRACK_API_KEY, DETRACK_API_URL, DETRACK_DN_API_URL } = require('../config/constants');
 
 class DetrackService {
   static async createJob(jobData) {
@@ -89,6 +89,7 @@ class DetrackService {
       console.log('📤 Final payload deliver_to_collect_from:', payload.data.deliver_to_collect_from);
       console.log('📤 Final payload:', JSON.stringify(payload, null, 2));
 
+      // ✅ CREATE: Use /api/v2/jobs for POST (not /dn/)
       const response = await axios.post(DETRACK_API_URL, payload, {
         headers: {
           'Content-Type': 'application/json',
@@ -117,6 +118,7 @@ class DetrackService {
       throw error;
     }
   }
+
   static async createCollectionJob(jobData) {
     try {
         console.log('📤 Creating collection with data:', JSON.stringify(jobData, null, 2));
@@ -205,6 +207,7 @@ class DetrackService {
         console.log('📤 Final collection payload - deliver_to_collect_from:', payload.data.deliver_to_collect_from);
         console.log('📤 Final collection payload:', JSON.stringify(payload, null, 2));
 
+        // ✅ CREATE COLLECTION: Use /api/v2/jobs for POST (not /dn/)
         const response = await axios.post(DETRACK_API_URL, payload, {
             headers: {
                 'Content-Type': 'application/json',
@@ -233,10 +236,12 @@ class DetrackService {
         
         throw error;
     }
-}
+  }
+
   static async getJobs() {
     try {
       console.log('📡 Fetching jobs from Detrack...');
+      // ✅ GET: Use /api/v2/jobs (not /dn/)
       const response = await axios.get(DETRACK_API_URL, {
         headers: {
           'X-API-KEY': DETRACK_API_KEY,
@@ -276,6 +281,8 @@ class DetrackService {
       throw error;
     }
   }
+
+  // ===== GET JOBS WITH FILTERS - Uses /api/v2/jobs (returns total_count) =====
   static async getJobsWithFilters(filters = {}) {
     try {
       console.log('📡 Fetching jobs from Detrack with filters:', filters);
@@ -298,9 +305,10 @@ class DetrackService {
         queryParams.append('limit', filters.limit);
       }
 
+      // ✅ GET: Use /api/v2/jobs (returns total_count)
       const url = `${DETRACK_API_URL}${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
 
-      console.log('📡 Final Detrack URL:', url);
+      console.log('📡 Final Detrack URL (GET):', url);
 
       const response = await axios.get(url, {
         headers: {
@@ -310,13 +318,25 @@ class DetrackService {
         timeout: 30000
       });
 
-      console.log(`✅ Fetched ${response.data?.data?.length || 0} jobs from Detrack`);
-      return response.data;
+      // ✅ LOG THE FULL RESPONSE TO SEE total_count
+      console.log('📊 Detrack response full:', {
+        dataLength: response.data?.data?.length || 0,
+        total_count: response.data?.total_count || 0,
+        links: response.data?.links || {}
+      });
+
+      // ✅ Return the FULL response including total_count
+      return {
+        data: response.data?.data || [],
+        links: response.data?.links || {},
+        total_count: response.data?.total_count || 0
+      };
     } catch (error) {
       console.error('❌ Error fetching jobs with filters:', error.message);
       throw error;
     }
   }
+
   static async searchAllGroups(searchTerm = '') {
     try {
       console.log(`📡 Searching all groups with term: "${searchTerm}"...`);
@@ -363,6 +383,7 @@ class DetrackService {
   static async getJobById(id) {
     try {
       console.log(`📡 Fetching job ${id} from Detrack...`);
+      // ✅ GET: Use /api/v2/jobs
       const response = await axios.get(`${DETRACK_API_URL}/${id}`, {
         headers: {
           'X-API-KEY': DETRACK_API_KEY,
@@ -381,6 +402,7 @@ class DetrackService {
   static async getJobByDoNumber(doNumber) {
     try {
       console.log(`📡 Fetching job by DO number: ${doNumber} from Detrack...`);
+      // ✅ GET: Use /api/v2/jobs (not /dn/)
       const response = await axios.get(`${DETRACK_API_URL}?do_number=${doNumber}`, {
         headers: {
           'X-API-KEY': DETRACK_API_KEY,
@@ -396,6 +418,155 @@ class DetrackService {
       return null;
     }
   }
+
+  // ===== CANCEL JOB - Uses /api/v2/dn/jobs for PUT =====
+  static async cancelJob(doNumber) {
+    try {
+      console.log(`🚫 Cancelling job: ${doNumber}`);
+
+      // First, get the job to check if it exists
+      const job = await this.getJobByDoNumber(doNumber);
+      if (!job) {
+        throw new Error(`Job ${doNumber} not found in Detrack`);
+      }
+
+      // Update status to 'cancelled'
+      const payload = {
+        data: {
+          status: 'cancelled',
+          reason: 'Cancelled by user'
+        }
+      };
+
+      console.log(`📤 Sending cancellation payload:`, JSON.stringify(payload, null, 2));
+
+      // ✅ CANCEL: Use /api/v2/dn/jobs for PUT
+      const response = await axios.put(
+        `${DETRACK_DN_API_URL}/${doNumber}`,
+        payload,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-KEY': DETRACK_API_KEY,
+            'User-Agent': 'curl/7.68.0'
+          },
+          timeout: 30000
+        }
+      );
+
+      console.log(`✅ Job ${doNumber} cancelled successfully in Detrack`);
+      return response.data;
+
+    } catch (error) {
+      console.error(`❌ Failed to cancel job ${doNumber}:`, error.message);
+      if (error.response) {
+        console.error('  Status:', error.response.status);
+        console.error('  Data:', JSON.stringify(error.response.data, null, 2));
+      }
+      throw error;
+    }
+  }
+
+  // ===== UPDATE JOB - Uses /api/v2/dn/jobs for PUT =====
+  static async updateJob(doNumber, updateData) {
+    try {
+      console.log(`✏️ Updating job: ${doNumber}`);
+      console.log('📦 Update data:', JSON.stringify(updateData, null, 2));
+
+      // First, get the job to check if it exists
+      const job = await this.getJobByDoNumber(doNumber);
+      if (!job) {
+        throw new Error(`Job ${doNumber} not found in Detrack`);
+      }
+
+      // Check if job is completed (cannot update completed jobs)
+      const currentStatus = job.status || job.primary_job_status || '';
+      if (currentStatus === 'completed' || currentStatus === 'delivered') {
+        throw new Error(`Cannot update completed job ${doNumber}`);
+      }
+
+      if (currentStatus === 'cancelled') {
+        throw new Error(`Cannot update cancelled job ${doNumber}`);
+      }
+
+      // Build update payload with CORRECT field mappings
+      const payload = { data: {} };
+
+      // 👇 CORRECT FIELD MAPPINGS FOR DETRACK
+      const fieldMap = {
+        // Address fields
+        address: 'address',
+        address_1: 'address_1',
+        address_2: 'address_2',
+        city: 'city',
+        state: 'state',
+        postal_code: 'postal_code',
+        country: 'country',
+        
+        // Recipient fields
+        deliver_to: 'deliver_to',
+        
+        // 👇 FIX: Detrack uses 'phone_number' for phone
+        phone: 'phone_number',
+        
+        instructions: 'instructions',
+        company_name: 'company_name',
+        notify_email: 'notify_email',
+        time_window: 'time_window',
+        date: 'date',
+        weight: 'weight',
+        
+        // 👇 FIX: Detrack uses 'number_of_shipping_labels' for boxes
+        boxes: 'number_of_shipping_labels',
+        cartons: 'cartons',
+      };
+
+      Object.keys(updateData).forEach(key => {
+        if (fieldMap[key] && updateData[key] !== undefined && updateData[key] !== null && updateData[key] !== '') {
+          payload.data[fieldMap[key]] = updateData[key];
+        }
+      });
+
+      // 👇 Also set 'boxes' as string for Detrack (some versions use this)
+      if (updateData.boxes) {
+        payload.data.boxes = String(parseInt(updateData.boxes));
+      }
+
+      // Ensure we have at least one field to update
+      if (Object.keys(payload.data).length === 0) {
+        throw new Error('No valid fields to update');
+      }
+
+      console.log(`📤 Sending update payload:`, JSON.stringify(payload, null, 2));
+
+      // ✅ UPDATE: Use /api/v2/dn/jobs for PUT
+      const response = await axios.put(
+        `${DETRACK_DN_API_URL}/${doNumber}`,
+        payload,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-KEY': DETRACK_API_KEY,
+            'User-Agent': 'curl/7.68.0'
+          },
+          timeout: 30000
+        }
+      );
+
+      console.log(`✅ Job ${doNumber} updated successfully in Detrack`);
+      console.log(`📤 Response:`, JSON.stringify(response.data, null, 2));
+      return response.data;
+
+    } catch (error) {
+      console.error(`❌ Failed to update job ${doNumber}:`, error.message);
+      if (error.response) {
+        console.error('  Status:', error.response.status);
+        console.error('  Data:', JSON.stringify(error.response.data, null, 2));
+      }
+      throw error;
+    }
+  }
+
   static async getVehicles() {
     try {
       console.log('📡 Fetching vehicles from Detrack...');
