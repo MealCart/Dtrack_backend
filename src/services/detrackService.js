@@ -121,120 +121,120 @@ class DetrackService {
 
   static async createCollectionJob(jobData) {
     try {
-        console.log('📤 Creating collection with data:', JSON.stringify(jobData, null, 2));
-        
-        // 👇 For collections, this is the SENDER name (who you're collecting from)
-        const collectFrom = jobData.collect_from || jobData.recipient_name || jobData.deliver_to_collect_from || 'Unknown Sender';
-        console.log(`👤 Service - collect_from: ${collectFrom}`);
+      console.log('📤 Creating collection with data:', JSON.stringify(jobData, null, 2));
 
-        const numberOfLabels = parseInt(jobData.boxes) || parseInt(jobData.cartons) || parseInt(jobData.number_of_shipping_labels) || 1;
+      // 👇 For collections, this is the SENDER name (who you're collecting from)
+      const collectFrom = jobData.collect_from || jobData.recipient_name || jobData.deliver_to_collect_from || 'Unknown Sender';
+      console.log(`👤 Service - collect_from: ${collectFrom}`);
 
-        // 👇 CRITICAL FIX: Use deliver_to_collect_from for collection sender
-        const data = {
-            do_number: jobData.do_number || `COL-${Date.now()}`,
-            address: jobData.address || jobData.address_1 || jobData.collection_address || 'Address required',
-            deliver_to_collect_from: collectFrom,  // 👈 This is the sender name for collections
-            collect_from: collectFrom,
-            date: jobData.date || jobData.scheduled_date || new Date().toISOString().split('T')[0],
-            phone: jobData.phone || jobData.recipient_phone || '',
-            notify_email: jobData.notify_email || jobData.customer_email || '',
-            instructions: jobData.instructions || jobData.special_instructions || '',
-            collection_time: jobData.collection_time || jobData.time_window || '07:00-18:00',
-            number_of_shipping_labels: numberOfLabels,
-            address_1: jobData.address_1 || jobData.collection_address || jobData.address || '',
-            address_2: jobData.address_2 || '',
-            postal_code: jobData.postal_code || '',
-            city: jobData.city || '',
-            state: jobData.state || '',
-            country: jobData.country || 'Australia',
-            company_name: jobData.company_name || jobData.recipient_company || '',
-            zone: jobData.zone || '',
-            latitude: jobData.latitude || '',
-            longitude: jobData.longitude || '',
-            assign_to: jobData.assign_to || '',
-            run_no: jobData.run_no || '',
-            depot: jobData.depot || '',
-            reason: jobData.reason || '',
-            received_by: jobData.received_by || '',
-            note: jobData.note || '',
-            remarks: jobData.remarks || '',
-            carrier: jobData.carrier || '',
-            payment_mode: jobData.payment_mode || '',
-            payment_amount: parseFloat(jobData.payment_amount) || 0,
-            invoice_no: jobData.invoice_no || '',
-            account_no: jobData.account_no || '',
-            delivery_sequence: parseInt(jobData.delivery_sequence) || 0,
-            service_type: 'Collection',
-            service_time: jobData.service_time || '',
-            start_time: jobData.start_time || '',
-            end_time: jobData.end_time || '',
-            depot_contact: jobData.depot_contact || '',
-            depot_contact_no: jobData.depot_contact_no || '',
-            depot_address: jobData.depot_address || '',
-            payment_collected: jobData.payment_collected || false,
-            auto_reschedule: jobData.auto_reschedule || false,
-            attachment_url: jobData.attachment_url || '',
-            type: 'Collection',
-            items: jobData.items || []
-        };
+      const numberOfLabels = parseInt(jobData.boxes) || parseInt(jobData.cartons) || parseInt(jobData.number_of_shipping_labels) || 1;
 
-        // If group_id is provided, add it to the payload
-        if (jobData.group_id) {
-            data.group_id = jobData.group_id;
-            console.log(`✅ Using group_id: ${jobData.group_id}`);
+      // 👇 CRITICAL FIX: Use deliver_to_collect_from for collection sender
+      const data = {
+        do_number: jobData.do_number || `COL-${Date.now()}`,
+        address: jobData.address || jobData.address_1 || jobData.collection_address || 'Address required',
+        deliver_to_collect_from: collectFrom,  // 👈 This is the sender name for collections
+        collect_from: collectFrom,
+        date: jobData.date || jobData.scheduled_date || new Date().toISOString().split('T')[0],
+        phone: jobData.phone || jobData.recipient_phone || '',
+        notify_email: jobData.notify_email || jobData.customer_email || '',
+        instructions: jobData.instructions || jobData.special_instructions || '',
+        collection_time: jobData.collection_time || jobData.time_window || '07:00-18:00',
+        number_of_shipping_labels: numberOfLabels,
+        address_1: jobData.address_1 || jobData.collection_address || jobData.address || '',
+        address_2: jobData.address_2 || '',
+        postal_code: jobData.postal_code || '',
+        city: jobData.city || '',
+        state: jobData.state || '',
+        country: jobData.country || 'Australia',
+        company_name: jobData.company_name || jobData.recipient_company || '',
+        zone: jobData.zone || '',
+        latitude: jobData.latitude || '',
+        longitude: jobData.longitude || '',
+        assign_to: jobData.assign_to || '',
+        run_no: jobData.run_no || '',
+        depot: jobData.depot || '',
+        reason: jobData.reason || '',
+        received_by: jobData.received_by || '',
+        note: jobData.note || '',
+        remarks: jobData.remarks || '',
+        carrier: jobData.carrier || '',
+        payment_mode: jobData.payment_mode || '',
+        payment_amount: parseFloat(jobData.payment_amount) || 0,
+        invoice_no: jobData.invoice_no || '',
+        account_no: jobData.account_no || '',
+        delivery_sequence: parseInt(jobData.delivery_sequence) || 0,
+        service_type: 'Collection',
+        service_time: jobData.service_time || '',
+        start_time: jobData.start_time || '',
+        end_time: jobData.end_time || '',
+        depot_contact: jobData.depot_contact || '',
+        depot_contact_no: jobData.depot_contact_no || '',
+        depot_address: jobData.depot_address || '',
+        payment_collected: jobData.payment_collected || false,
+        auto_reschedule: jobData.auto_reschedule || false,
+        attachment_url: jobData.attachment_url || '',
+        type: 'Collection',
+        items: jobData.items || []
+      };
+
+      // If group_id is provided, add it to the payload
+      if (jobData.group_id) {
+        data.group_id = jobData.group_id;
+        console.log(`✅ Using group_id: ${jobData.group_id}`);
+      }
+
+      // 👇 CRITICAL FIX: Always include deliver_to_collect_from for collections
+      const cleanData = {};
+      Object.keys(data).forEach(key => {
+        if (key === 'deliver_to_collect_from') {
+          cleanData[key] = data[key] || 'Unknown Sender';
+        } else if (data[key] !== '' && data[key] !== null && data[key] !== undefined) {
+          cleanData[key] = data[key];
         }
+      });
 
-        // 👇 CRITICAL FIX: Always include deliver_to_collect_from for collections
-        const cleanData = {};
-        Object.keys(data).forEach(key => {
-            if (key === 'deliver_to_collect_from') {
-                cleanData[key] = data[key] || 'Unknown Sender';
-            } else if (data[key] !== '' && data[key] !== null && data[key] !== undefined) {
-                cleanData[key] = data[key];
-            }
-        });
+      // Ensure required fields are always present
+      const requiredFields = ['do_number', 'address', 'deliver_to_collect_from'];
+      requiredFields.forEach(field => {
+        if (!cleanData[field]) {
+          cleanData[field] = data[field] || 'Required';
+        }
+      });
 
-        // Ensure required fields are always present
-        const requiredFields = ['do_number', 'address', 'deliver_to_collect_from'];
-        requiredFields.forEach(field => {
-            if (!cleanData[field]) {
-                cleanData[field] = data[field] || 'Required';
-            }
-        });
+      const payload = { data: cleanData };
 
-        const payload = { data: cleanData };
+      console.log('📤 Final collection payload - deliver_to_collect_from:', payload.data.deliver_to_collect_from);
+      console.log('📤 Final collection payload:', JSON.stringify(payload, null, 2));
 
-        console.log('📤 Final collection payload - deliver_to_collect_from:', payload.data.deliver_to_collect_from);
-        console.log('📤 Final collection payload:', JSON.stringify(payload, null, 2));
+      // ✅ CREATE COLLECTION: Use /api/v2/jobs for POST (not /dn/)
+      const response = await axios.post(DETRACK_API_URL, payload, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-KEY': DETRACK_API_KEY,
+          'User-Agent': 'curl/7.68.0'
+        },
+        timeout: 30000
+      });
 
-        // ✅ CREATE COLLECTION: Use /api/v2/jobs for POST (not /dn/)
-        const response = await axios.post(DETRACK_API_URL, payload, {
-            headers: {
-                'Content-Type': 'application/json',
-                'X-API-KEY': DETRACK_API_KEY,
-                'User-Agent': 'curl/7.68.0'
-            },
-            timeout: 30000
-        });
+      console.log('✅ Collection created successfully');
+      console.log('✅ Response - deliver_to_collect_from:', response.data?.data?.deliver_to_collect_from);
+      return response.data;
 
-        console.log('✅ Collection created successfully');
-        console.log('✅ Response - deliver_to_collect_from:', response.data?.data?.deliver_to_collect_from);
-        return response.data;
-        
     } catch (error) {
-        console.error('❌ Detrack API Error (Collection):');
-        console.error('  Status:', error.response?.status);
-        console.error('  Status Text:', error.response?.statusText);
-        
-        if (error.response?.data) {
-            console.error('  Response Data:', JSON.stringify(error.response.data, null, 2));
-            
-            if (error.response.data.errors) {
-                console.error('  Validation Errors:', JSON.stringify(error.response.data.errors, null, 2));
-            }
+      console.error('❌ Detrack API Error (Collection):');
+      console.error('  Status:', error.response?.status);
+      console.error('  Status Text:', error.response?.statusText);
+
+      if (error.response?.data) {
+        console.error('  Response Data:', JSON.stringify(error.response.data, null, 2));
+
+        if (error.response.data.errors) {
+          console.error('  Validation Errors:', JSON.stringify(error.response.data.errors, null, 2));
         }
-        
-        throw error;
+      }
+
+      throw error;
     }
   }
 
@@ -402,19 +402,67 @@ class DetrackService {
   static async getJobByDoNumber(doNumber) {
     try {
       console.log(`📡 Fetching job by DO number: ${doNumber} from Detrack...`);
+
+      // ✅ FIX: URL encode the DO number for the API call
+      // Detrack API expects URL-encoded values
+      const encodedDoNumber = encodeURIComponent(doNumber);
+      console.log(`🔗 Encoded DO number: ${encodedDoNumber}`);
+
       // ✅ GET: Use /api/v2/jobs (not /dn/)
-      const response = await axios.get(`${DETRACK_API_URL}?do_number=${doNumber}`, {
+      const response = await axios.get(`${DETRACK_API_URL}?do_number=${encodedDoNumber}`, {
         headers: {
           'X-API-KEY': DETRACK_API_KEY,
           'User-Agent': 'curl/7.68.0'
         },
         timeout: 30000
       });
+
       const jobs = response.data?.data || [];
       console.log(`✅ ${jobs.length > 0 ? 'Found' : 'No'} job found for DO number: ${doNumber}`);
+
+      // ✅ If no job found and the DO number contains #, try without encoding
+      // (Some Detrack versions handle # differently)
+      if (jobs.length === 0 && doNumber.includes('#')) {
+        console.log(`🔄 No job found with encoded #, trying unencoded...`);
+
+        // Try without encoding the # (some Detrack versions work this way)
+        const unencodedResponse = await axios.get(`${DETRACK_API_URL}?do_number=${doNumber}`, {
+          headers: {
+            'X-API-KEY': DETRACK_API_KEY,
+            'User-Agent': 'curl/7.68.0'
+          },
+          timeout: 30000
+        });
+
+        const unencodedJobs = unencodedResponse.data?.data || [];
+        console.log(`✅ ${unencodedJobs.length > 0 ? 'Found' : 'No'} job found without encoding`);
+
+        return unencodedJobs.length > 0 ? unencodedJobs[0] : null;
+      }
+
       return jobs.length > 0 ? jobs[0] : null;
     } catch (error) {
       console.error(`❌ Error fetching job by DO number ${doNumber}:`, error.message);
+
+      // ✅ If the error is about the # character, try without encoding
+      if (error.response?.status === 422 && doNumber.includes('#')) {
+        console.log(`🔄 Retrying without encoding due to 422 error...`);
+        try {
+          const retryResponse = await axios.get(`${DETRACK_API_URL}?do_number=${doNumber}`, {
+            headers: {
+              'X-API-KEY': DETRACK_API_KEY,
+              'User-Agent': 'curl/7.68.0'
+            },
+            timeout: 30000
+          });
+          const retryJobs = retryResponse.data?.data || [];
+          return retryJobs.length > 0 ? retryJobs[0] : null;
+        } catch (retryError) {
+          console.error(`❌ Retry failed:`, retryError.message);
+          return null;
+        }
+      }
+
       return null;
     }
   }
@@ -502,20 +550,20 @@ class DetrackService {
         state: 'state',
         postal_code: 'postal_code',
         country: 'country',
-        
+
         // Recipient fields
         deliver_to: 'deliver_to',
-        
+
         // 👇 FIX: Detrack uses 'phone_number' for phone
         phone: 'phone_number',
-        
+
         instructions: 'instructions',
         company_name: 'company_name',
         notify_email: 'notify_email',
         time_window: 'time_window',
         date: 'date',
         weight: 'weight',
-        
+
         // 👇 FIX: Detrack uses 'number_of_shipping_labels' for boxes
         boxes: 'number_of_shipping_labels',
         cartons: 'cartons',
