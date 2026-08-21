@@ -175,7 +175,7 @@ exports.getScanReport = async (req, res) => {
             totalScannedLabels += scannedCount;
 
             // Determine scan status
-            let scanStatus = 'labels_not_generated'; // 👈 CHANGED
+            let scanStatus = 'labels_not_generated';
             if (isInDatabase) {
                 if (scannedCount === 0) {
                     scanStatus = 'not_scanned';
@@ -200,7 +200,7 @@ exports.getScanReport = async (req, res) => {
                 is_in_database: isInDatabase,
                 barcodes: barcodes,
                 scanned_barcodes: scannedBarcodes,
-                scan_details: scanDetails, // 👈 NEW: Detailed scan info
+                scan_details: scanDetails,
                 scans: scans,
                 db_status: dbJob?.status || null,
                 group_name: dbJob?.group_name || detrackJob.group_name || '',
@@ -214,7 +214,7 @@ exports.getScanReport = async (req, res) => {
             fullyScanned: jobReports.filter(j => j.scan_status === 'fully_scanned').length,
             partiallyScanned: jobReports.filter(j => j.scan_status === 'partially_scanned').length,
             notScanned: jobReports.filter(j => j.scan_status === 'not_scanned').length,
-            labelsNotGenerated: jobReports.filter(j => j.scan_status === 'labels_not_generated').length // 👈 CHANGED
+            labelsNotGenerated: jobReports.filter(j => j.scan_status === 'labels_not_generated').length
         };
 
         console.log(`📊 Scan Report Summary:`, summary);
@@ -311,7 +311,7 @@ exports.getScanReportSummary = async (req, res) => {
         let fullyScanned = 0;
         let partiallyScanned = 0;
         let notScanned = 0;
-        let labelsNotGenerated = 0; // 👈 CHANGED
+        let labelsNotGenerated = 0;
         const recentJobs = [];
 
         detrackJobs.slice(0, 10).forEach(detrackJob => {
@@ -346,7 +346,7 @@ exports.getScanReportSummary = async (req, res) => {
             totalLabels += labelCount;
             totalScannedLabels += scannedCount;
 
-            let scanStatus = 'labels_not_generated'; // 👈 CHANGED
+            let scanStatus = 'labels_not_generated';
             if (dbJob) {
                 if (scannedCount === 0) {
                     scanStatus = 'not_scanned';
@@ -359,10 +359,9 @@ exports.getScanReportSummary = async (req, res) => {
                     fullyScanned++;
                 }
             } else {
-                labelsNotGenerated++; // 👈 CHANGED
+                labelsNotGenerated++;
             }
 
-            // Build recent jobs list
             recentJobs.push({
                 do_number: doNumber,
                 recipient_name: detrackJob.deliver_to_collect_from || detrackJob.deliver_to || 'Unknown',
@@ -385,7 +384,7 @@ exports.getScanReportSummary = async (req, res) => {
                 fullyScanned,
                 partiallyScanned,
                 notScanned,
-                labelsNotGenerated // 👈 CHANGED
+                labelsNotGenerated
             },
             recentJobs: recentJobs
         });
@@ -412,6 +411,7 @@ exports.getJobScanDetails = async (req, res) => {
 
         console.log(`🔍 Getting scan details for job: ${doNumber}`);
 
+        // ===== STEP 1: Try to fetch from database first =====
         const query = `
             SELECT 
                 do_number,
@@ -431,96 +431,223 @@ exports.getJobScanDetails = async (req, res) => {
         `;
         const result = await pool.query(query, [doNumber]);
 
-        if (result.rows.length === 0) {
-            return res.status(404).json({
-                error: 'Job not found in database. Labels not generated yet.',
-                do_number: doNumber
+        // ===== STEP 2: If found in database, return database data =====
+        if (result.rows.length > 0) {
+            const job = result.rows[0];
+            
+            let barcodes = [];
+            let scans = [];
+
+            if (job.barcodes) {
+                try {
+                    barcodes = typeof job.barcodes === 'string' ? JSON.parse(job.barcodes) : job.barcodes;
+                } catch (e) { barcodes = []; }
+            }
+
+            if (job.scans) {
+                try {
+                    scans = typeof job.scans === 'string' ? JSON.parse(job.scans) : job.scans;
+                } catch (e) { scans = []; }
+            }
+
+            // Build barcode status
+            const barcodeStatus = barcodes.map(barcode => {
+                const scan = scans.find(s => s.barcode === barcode);
+                return {
+                    barcode: barcode,
+                    is_scanned: !!scan,
+                    scan_details: scan ? {
+                        staff: scan.staff || 'Unknown',
+                        scanned_by: scan.scanned_by || scan.staff || 'Unknown',
+                        location: scan.location || 'Unknown',
+                        timestamp: scan.timestamp,
+                        checkpoint: scan.checkpoint || 'Scanned'
+                    } : null,
+                    scanned_at: scan?.timestamp || null,
+                    scanned_by: scan?.scanned_by || scan?.staff || null,
+                    location: scan?.location || null,
+                    checkpoint: scan?.checkpoint || null
+                };
+            });
+
+            const scannedCount = barcodeStatus.filter(b => b.is_scanned).length;
+            const totalCount = barcodeStatus.length;
+
+            const scanHistory = scans.map(scan => ({
+                barcode: scan.barcode,
+                staff: scan.staff || 'Unknown',
+                scanned_by: scan.scanned_by || scan.staff || 'Unknown',
+                location: scan.location || 'Unknown',
+                timestamp: scan.timestamp,
+                checkpoint: scan.checkpoint || 'Scanned',
+                formatted_time: scan.timestamp ? new Date(scan.timestamp).toLocaleString('en-AU', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false
+                }) : 'N/A'
+            }));
+
+            return res.json({
+                success: true,
+                do_number: doNumber,
+                customer_name: job.customer_name,
+                recipient_name: job.recipient_name,
+                address: job.delivery_address,
+                postcode: job.postcode,
+                status: job.status,
+                scheduled_date: job.scheduled_date,
+                group_name: job.group_name,
+                total_labels: totalCount,
+                scanned_count: scannedCount,
+                unscanned_count: totalCount - scannedCount,
+                scan_rate: totalCount > 0 ? `${Math.round((scannedCount / totalCount) * 100)}%` : '0%',
+                is_fully_scanned: scannedCount === totalCount && totalCount > 0,
+                is_in_database: true,
+                barcode_status: barcodeStatus,
+                scan_history: scanHistory,
+                scans: scans
             });
         }
 
-        const job = result.rows[0];
+        // ===== STEP 3: If NOT in database, fetch from Detrack =====
+        console.log(`📦 Job ${doNumber} not in database, fetching from Detrack...`);
 
-        let barcodes = [];
-        let scans = [];
+        try {
+            // Fetch job from Detrack
+            const detrackJob = await DetrackService.getJobByDoNumber(doNumber);
+            
+            if (!detrackJob) {
+                return res.status(404).json({
+                    error: 'Job not found',
+                    message: 'Job not found in Detrack or database'
+                });
+            }
 
-        if (job.barcodes) {
-            try {
-                barcodes = typeof job.barcodes === 'string' ? JSON.parse(job.barcodes) : job.barcodes;
-            } catch (e) { barcodes = []; }
-        }
+            // Get shipping labels count from Detrack
+            const shippingLabels = parseInt(detrackJob.number_of_shipping_labels) || 
+                                  parseInt(detrackJob.cartons) || 
+                                  parseInt(detrackJob.boxes) || 1;
 
-        if (job.scans) {
-            try {
-                scans = typeof job.scans === 'string' ? JSON.parse(job.scans) : job.scans;
-            } catch (e) { scans = []; }
-        }
+            // Generate barcodes based on shipping labels count
+            const barcodes = [];
+            for (let i = 0; i < shippingLabels; i++) {
+                barcodes.push(`${doNumber}-${String(i + 1).padStart(2, '0')}`);
+            }
 
-        // Build scan status for each barcode with full details
-        const barcodeStatus = barcodes.map(barcode => {
-            const scan = scans.find(s => s.barcode === barcode);
-            return {
+            // Build barcode status (all not scanned since not in database)
+            const barcodeStatus = barcodes.map(barcode => ({
                 barcode: barcode,
-                is_scanned: !!scan,
-                scan_details: scan ? {
-                    staff: scan.staff || 'Unknown',
-                    scanned_by: scan.scanned_by || scan.staff || 'Unknown',
-                    location: scan.location || 'Unknown',
-                    timestamp: scan.timestamp,
-                    checkpoint: scan.checkpoint || 'Scanned'
-                } : null,
-                scanned_at: scan?.timestamp || null,
-                scanned_by: scan?.scanned_by || scan?.staff || null,
-                location: scan?.location || null,
-                checkpoint: scan?.checkpoint || null
-            };
-        });
+                is_scanned: false,
+                scan_details: null,
+                scanned_at: null,
+                scanned_by: null,
+                location: null,
+                checkpoint: 'Pending'
+            }));
 
-        const scannedCount = barcodeStatus.filter(b => b.is_scanned).length;
-        const totalCount = barcodeStatus.length;
+            return res.json({
+                success: true,
+                do_number: doNumber,
+                customer_name: detrackJob.deliver_to_collect_from || detrackJob.deliver_to || 'Unknown',
+                recipient_name: detrackJob.deliver_to_collect_from || detrackJob.deliver_to || 'Unknown',
+                address: detrackJob.address || 'No address',
+                postcode: detrackJob.postal_code || '',
+                status: detrackJob.status || detrackJob.primary_job_status || 'pending',
+                scheduled_date: detrackJob.date || null,
+                group_name: detrackJob.group_name || '',
+                total_labels: shippingLabels,
+                scanned_count: 0,
+                unscanned_count: shippingLabels,
+                scan_rate: '0%',
+                is_fully_scanned: false,
+                is_in_database: false,
+                barcode_status: barcodeStatus,
+                scan_history: [],
+                scans: [],
+                _source: 'detrack',
+                _message: 'Job exists in Detrack but labels not generated in database yet.'
+            });
 
-        // Get scan history with full details
-        const scanHistory = scans.map(scan => ({
-            barcode: scan.barcode,
-            staff: scan.staff || 'Unknown',
-            scanned_by: scan.scanned_by || scan.staff || 'Unknown',
-            location: scan.location || 'Unknown',
-            timestamp: scan.timestamp,
-            checkpoint: scan.checkpoint || 'Scanned',
-            formatted_time: scan.timestamp ? new Date(scan.timestamp).toLocaleString('en-AU', {
-                day: '2-digit',
-                month: '2-digit',
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: false
-            }) : 'N/A'
-        }));
-
-        res.json({
-            success: true,
-            do_number: doNumber,
-            customer_name: job.customer_name,
-            recipient_name: job.recipient_name,
-            address: job.delivery_address,
-            postcode: job.postcode,
-            status: job.status,
-            scheduled_date: job.scheduled_date,
-            group_name: job.group_name,
-            total_labels: totalCount,
-            scanned_count: scannedCount,
-            unscanned_count: totalCount - scannedCount,
-            scan_rate: totalCount > 0 ? `${Math.round((scannedCount / totalCount) * 100)}%` : '0%',
-            is_fully_scanned: scannedCount === totalCount && totalCount > 0,
-            barcode_status: barcodeStatus,
-            scan_history: scanHistory, // 👈 NEW: Full scan history
-            scans: scans
-        });
+        } catch (detrackError) {
+            console.error('❌ Failed to fetch from Detrack:', detrackError.message);
+            return res.status(404).json({
+                error: 'Job not found',
+                message: 'Job not found in Detrack or database'
+            });
+        }
 
     } catch (error) {
         console.error('❌ Get job scan details error:', error);
         res.status(500).json({
             error: 'Failed to get job scan details',
+            details: error.message
+        });
+    }
+};
+
+// ============================================
+// EXPORT UNSCANNED LABELS ONLY
+// ============================================
+exports.exportUnscannedLabels = async (req, res) => {
+    try {
+        const { date } = req.query;
+
+        if (!date) {
+            return res.status(400).json({ error: 'Date is required (YYYY-MM-DD)' });
+        }
+
+        console.log(`📊 Exporting unscanned labels for date: ${date}`);
+
+        // Get the scan report first
+        const reportData = await exports.getScanReportData(date);
+
+        if (!reportData || reportData.jobs.length === 0) {
+            return res.status(404).json({ error: 'No data found for this date' });
+        }
+
+        // Build CSV with only unscanned labels
+        let csv = 'DO Number,Recipient,Postcode,Total Labels,Unscanned Labels,Unscanned Barcodes\n';
+        let totalUnscanned = 0;
+
+        reportData.jobs.forEach(job => {
+            if (job.unscanned_count > 0) {
+                // Get the unscanned barcodes for this job
+                const unscannedBarcodes = job.barcodes.filter(function(barcode) {
+                    return !job.scanned_barcodes.includes(barcode);
+                });
+
+                totalUnscanned += unscannedBarcodes.length;
+
+                // Add a row for each unscanned barcode
+                unscannedBarcodes.forEach(function(barcode) {
+                    csv += job.do_number + ',';
+                    csv += '"' + (job.recipient_name || 'Unknown') + '",';
+                    csv += (job.postcode || '') + ',';
+                    csv += job.total_labels + ',';
+                    csv += job.unscanned_count + ',';
+                    csv += barcode + '\n';
+                });
+            }
+        });
+
+        // Add summary at the top
+        const summary = 'Total Unscanned Labels: ' + totalUnscanned + '\n\n';
+        csv = summary + csv;
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename=unscanned_labels_' + date + '.csv');
+        res.send(csv);
+
+        console.log('✅ Exported ' + totalUnscanned + ' unscanned labels for ' + date);
+
+    } catch (error) {
+        console.error('❌ Export unscanned labels error:', error);
+        res.status(500).json({
+            error: 'Failed to export unscanned labels',
             details: error.message
         });
     }
@@ -545,28 +672,31 @@ exports.exportScanReport = async (req, res) => {
 
         let csv = 'DO Number,Recipient,Address,Postcode,Total Labels,Scanned,Unscanned,Scan Rate,Status\n';
         
-        report.jobs.forEach(job => {
-            const statusLabel = job.scan_status === 'labels_not_generated' 
-                ? 'Labels Not Generated' 
-                : job.scan_status === 'fully_scanned' 
-                    ? 'Fully Scanned' 
-                    : job.scan_status === 'partially_scanned' 
-                        ? 'Partially Scanned' 
-                        : 'Not Scanned';
+        report.jobs.forEach(function(job) {
+            var statusLabel;
+            if (job.scan_status === 'labels_not_generated') {
+                statusLabel = 'Labels Not Generated';
+            } else if (job.scan_status === 'fully_scanned') {
+                statusLabel = 'Fully Scanned';
+            } else if (job.scan_status === 'partially_scanned') {
+                statusLabel = 'Partially Scanned';
+            } else {
+                statusLabel = 'Not Scanned';
+            }
             
-            csv += `${job.do_number},`;
-            csv += `"${job.recipient_name || 'Unknown'}",`;
-            csv += `"${job.address || ''}",`;
-            csv += `${job.postcode || ''},`;
-            csv += `${job.total_labels},`;
-            csv += `${job.scanned_count},`;
-            csv += `${job.unscanned_count},`;
-            csv += `${job.scan_rate},`;
-            csv += `${statusLabel}\n`;
+            csv += job.do_number + ',';
+            csv += '"' + (job.recipient_name || 'Unknown') + '",';
+            csv += '"' + (job.address || '') + '",';
+            csv += (job.postcode || '') + ',';
+            csv += job.total_labels + ',';
+            csv += job.scanned_count + ',';
+            csv += job.unscanned_count + ',';
+            csv += job.scan_rate + ',';
+            csv += statusLabel + '\n';
         });
 
         res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', `attachment; filename=scan_report_${date}.csv`);
+        res.setHeader('Content-Disposition', 'attachment; filename=scan_report_' + date + '.csv');
         res.send(csv);
 
     } catch (error) {
@@ -591,14 +721,14 @@ exports.getScanReportData = async (date) => {
         const detrackJobs = detrackResponse?.data || [];
 
         if (detrackJobs.length === 0) {
-            return { date, jobs: [], summary: {} };
+            return { date: date, jobs: [], summary: {} };
         }
 
-        const doNumbers = detrackJobs.map(job => job.do_number).filter(Boolean);
+        const doNumbers = detrackJobs.map(function(job) { return job.do_number; }).filter(Boolean);
 
         let dbJobs = [];
         if (doNumbers.length > 0) {
-            const placeholders = doNumbers.map((_, i) => `$${i + 1}`).join(', ');
+            const placeholders = doNumbers.map(function(_, i) { return '$' + (i + 1); }).join(', ');
             const query = `
                 SELECT do_number, barcodes, scans
                 FROM jobs
@@ -609,7 +739,7 @@ exports.getScanReportData = async (date) => {
         }
 
         const dbJobMap = {};
-        dbJobs.forEach(job => {
+        dbJobs.forEach(function(job) {
             dbJobMap[job.do_number] = job;
         });
 
@@ -617,7 +747,7 @@ exports.getScanReportData = async (date) => {
         let totalLabels = 0;
         let totalScannedLabels = 0;
 
-        detrackJobs.forEach(detrackJob => {
+        detrackJobs.forEach(function(detrackJob) {
             const doNumber = detrackJob.do_number;
             const dbJob = dbJobMap[doNumber] || null;
 
@@ -632,20 +762,44 @@ exports.getScanReportData = async (date) => {
 
             if (dbJob) {
                 isInDatabase = true;
+                
+                // Parse barcodes from database
                 if (dbJob.barcodes) {
                     try {
                         barcodes = typeof dbJob.barcodes === 'string' ? JSON.parse(dbJob.barcodes) : dbJob.barcodes;
-                    } catch (e) { barcodes = []; }
+                    } catch (e) { 
+                        barcodes = []; 
+                    }
                 }
+
+                // Parse scans from database
                 if (dbJob.scans) {
                     try {
                         scans = typeof dbJob.scans === 'string' ? JSON.parse(dbJob.scans) : dbJob.scans;
-                    } catch (e) { scans = []; }
+                    } catch (e) { 
+                        scans = []; 
+                    }
                 }
-                scannedBarcodes = scans.map(s => s.barcode).filter(Boolean);
+
+                // 👇 FIX: Extract scanned barcodes from scans array
+                scannedBarcodes = [];
+                if (scans && scans.length > 0) {
+                    scannedBarcodes = scans.map(function(s) { 
+                        return s.barcode; 
+                    }).filter(Boolean);
+                }
             }
 
+            // 👇 FIX: Use barcodes from database, or generate from shipping labels
             const labelCount = barcodes.length > 0 ? barcodes.length : shippingLabels;
+            
+            // 👇 FIX: If barcodes is empty but we have shippingLabels, generate them
+            if (barcodes.length === 0 && shippingLabels > 0) {
+                for (let i = 0; i < shippingLabels; i++) {
+                    barcodes.push(doNumber + '-' + String(i + 1).padStart(2, '0'));
+                }
+            }
+
             const scannedCount = scannedBarcodes.length;
             const unscannedCount = labelCount - scannedCount;
 
@@ -671,7 +825,7 @@ exports.getScanReportData = async (date) => {
                 total_labels: labelCount,
                 scanned_count: scannedCount,
                 unscanned_count: unscannedCount,
-                scan_rate: labelCount > 0 ? `${Math.round((scannedCount / labelCount) * 100)}%` : '0%',
+                scan_rate: labelCount > 0 ? Math.round((scannedCount / labelCount) * 100) + '%' : '0%',
                 scan_status: scanStatus,
                 is_in_database: isInDatabase,
                 barcodes: barcodes,
@@ -680,20 +834,84 @@ exports.getScanReportData = async (date) => {
         });
 
         return {
-            date,
+            date: date,
             jobs: jobReports,
-            totalLabels,
-            totalScannedLabels,
+            totalLabels: totalLabels,
+            totalScannedLabels: totalScannedLabels,
             summary: {
                 totalJobs: jobReports.length,
-                fullyScanned: jobReports.filter(j => j.scan_status === 'fully_scanned').length,
-                partiallyScanned: jobReports.filter(j => j.scan_status === 'partially_scanned').length,
-                notScanned: jobReports.filter(j => j.scan_status === 'not_scanned').length,
-                labelsNotGenerated: jobReports.filter(j => j.scan_status === 'labels_not_generated').length
+                fullyScanned: jobReports.filter(function(j) { return j.scan_status === 'fully_scanned'; }).length,
+                partiallyScanned: jobReports.filter(function(j) { return j.scan_status === 'partially_scanned'; }).length,
+                notScanned: jobReports.filter(function(j) { return j.scan_status === 'not_scanned'; }).length,
+                labelsNotGenerated: jobReports.filter(function(j) { return j.scan_status === 'labels_not_generated'; }).length
             }
         };
     } catch (error) {
         console.error('❌ Get scan report data error:', error);
         throw error;
+    }
+};
+
+exports.getUnscannedLabelsData = async (req, res) => {
+    try {
+        const { date } = req.query;
+
+        if (!date) {
+            return res.status(400).json({ error: 'Date is required (YYYY-MM-DD)' });
+        }
+
+        console.log(`📊 Getting unscanned labels data for date: ${date}`);
+
+        const reportData = await exports.getScanReportData(date);
+
+        if (!reportData || reportData.jobs.length === 0) {
+            return res.json({
+                success: true,
+                date: date,
+                totalUnscanned: 0,
+                jobs: []
+            });
+        }
+
+        // Build unscanned labels list
+        const unscannedJobs = [];
+        let totalUnscanned = 0;
+
+        reportData.jobs.forEach(job => {
+            if (job.unscanned_count > 0) {
+                const unscannedBarcodes = job.barcodes.filter(function(barcode) {
+                    return !job.scanned_barcodes.includes(barcode);
+                });
+
+                totalUnscanned += unscannedBarcodes.length;
+
+                unscannedJobs.push({
+                    do_number: job.do_number,
+                    recipient_name: job.recipient_name || 'Unknown',
+                    postcode: job.postcode || '',
+                    total_labels: job.total_labels,
+                    scanned_count: job.scanned_count,
+                    unscanned_count: job.unscanned_count,
+                    scan_rate: job.scan_rate,
+                    scan_status: job.scan_status,
+                    unscanned_barcodes: unscannedBarcodes
+                });
+            }
+        });
+
+        res.json({
+            success: true,
+            date: date,
+            totalUnscanned: totalUnscanned,
+            totalJobs: unscannedJobs.length,
+            jobs: unscannedJobs
+        });
+
+    } catch (error) {
+        console.error('❌ Get unscanned labels data error:', error);
+        res.status(500).json({
+            error: 'Failed to get unscanned labels data',
+            details: error.message
+        });
     }
 };

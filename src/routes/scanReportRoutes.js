@@ -18,4 +18,6 @@ router.get('/scan-report/job/:doNumber', authenticate, scanReportController.getJ
 // Export scan report as CSV/Excel
 router.get('/scan-report/export', authenticate, scanReportController.exportScanReport);
 
+router.get('/scan-report/export-unscanned', authenticate, scanReportController.exportUnscannedLabels);
+router.get('/scan-report/unscanned-labels', authenticate, scanReportController.getUnscannedLabelsData);
 module.exports = router;
