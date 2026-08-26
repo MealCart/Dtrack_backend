@@ -24,10 +24,10 @@ function mapDetrackJobToBooking(job) {
   }
 
   if (barcodes.length === 0) {
-    for (let i = 0; i < shippingLabels; i++) {
-      barcodes.push(doNumber + '-' + String(i + 1).padStart(2, '0'));
-    }
+  for (let i = 0; i < shippingLabels; i++) {
+    barcodes.push(doNumber + '-' + (i + 1));  // ✅ REMOVED padStart
   }
+}
 
   let scans = job.scans || [];
   if (typeof scans === 'string') {
@@ -161,7 +161,7 @@ exports.generatePod = async (req, res) => {
 
     const pdfDoc = await PODService.generatePOD(job, photos);
     const pdfBytes = await pdfDoc.save();
-    
+
     console.log(`📄 PDF size: ${pdfBytes.length} bytes`);
 
     res.setHeader('Content-Type', 'application/pdf');
@@ -283,7 +283,7 @@ exports.getJobByDoNumber = async (req, res) => {
   try {
     // ✅ FIX: Get do_number from query and decode it
     let do_number = req.query.do_number;
-    
+
     if (!do_number) {
       return res.status(400).json({ error: 'do_number is required' });
     }
@@ -291,12 +291,12 @@ exports.getJobByDoNumber = async (req, res) => {
     // ✅ Decode URL-encoded characters
     // This handles: %23 -> #, etc.
     do_number = decodeURIComponent(do_number);
-    
+
     console.log(`📡 Fetching job by DO number: ${do_number} from Detrack...`);
-    
+
     const job = await DetrackService.getJobByDoNumber(do_number);
     console.log(`✅ ${job ? 'Found' : 'No'} job found for DO number: ${do_number}`);
-    
+
     return res.json({
       success: true,
       data: job
@@ -342,7 +342,7 @@ exports.createJob = async (req, res) => {
     const detrackPayload = {
       do_number: jobData.do_number,
       address: jobData.address,
-     deliver_to_collect_from: jobData.deliver_to || jobData.recipient_name || 'Recipient required',
+      deliver_to_collect_from: jobData.deliver_to || jobData.recipient_name || 'Recipient required',
       date: jobData.date || null,
       phone: jobData.phone || '',
       notify_email: jobData.notify_email || '',
@@ -453,11 +453,11 @@ exports.getDetrackCollections = async (req, res) => {
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
 
-    console.log('📡 Fetching Detrack collections with filters:', { 
-      date, 
-      groupId, 
-      page, 
-      limit, 
+    console.log('📡 Fetching Detrack collections with filters:', {
+      date,
+      groupId,
+      page,
+      limit,
       role: userRole,
       userGroupId: userGroupId
     });
@@ -469,7 +469,7 @@ exports.getDetrackCollections = async (req, res) => {
     if (date) {
       queryParams.date = date;
     }
-    
+
     if (page) {
       queryParams.page = parseInt(page);
     }
@@ -501,38 +501,38 @@ exports.getDetrackCollections = async (req, res) => {
         let currentPageTemp = 1;
         let hasNextTemp = true;
         let safetyLimit = 0;
-        
+
         while (hasNextTemp && safetyLimit < 20) {
-          const tempParams = { 
-            ...queryParams, 
-            page: currentPageTemp, 
-            limit: 100 
+          const tempParams = {
+            ...queryParams,
+            page: currentPageTemp,
+            limit: 100
           };
-          
+
           const tempResponse = await DetrackService.getJobsWithFilters(tempParams);
-          
+
           if (tempResponse?.data && tempResponse.data.length > 0) {
             const tempCollections = tempResponse.data.map(job => mapDetrackJobToBooking(job));
             tempCollections.forEach(c => c.type = 'collection');
-            const groupCollections = tempCollections.filter(collection => 
+            const groupCollections = tempCollections.filter(collection =>
               collection.groupId === targetGroupId || collection.group_id === targetGroupId
             );
             allGroupCollections = allGroupCollections.concat(groupCollections);
           }
-          
+
           hasNextTemp = tempResponse?.links?.next !== null && tempResponse.data?.length > 0;
           currentPageTemp++;
           safetyLimit++;
         }
-        
+
         totalCount = allGroupCollections.length;
         console.log(`📊 Total collections for group ${targetGroupId}: ${totalCount}`);
-        
+
         // Apply pagination
         const startIndex = (parseInt(page || 1) - 1) * itemsPerPage;
         const endIndex = Math.min(startIndex + itemsPerPage, allGroupCollections.length);
         filteredCollections = allGroupCollections.slice(startIndex, endIndex);
-        
+
       } catch (error) {
         console.error('Error counting group collections:', error);
         totalCount = filteredCollections.length;
@@ -865,11 +865,11 @@ exports.getDetrackJobsWithFilters = async (req, res) => {
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
 
-    console.log('📡 Fetching Detrack jobs with filters:', { 
-      date, 
-      groupId, 
-      page, 
-      limit, 
+    console.log('📡 Fetching Detrack jobs with filters:', {
+      date,
+      groupId,
+      page,
+      limit,
       role: userRole,
       userGroupId: userGroupId
     });
@@ -881,11 +881,11 @@ exports.getDetrackJobsWithFilters = async (req, res) => {
     if (date) {
       queryParams.date = date;
     }
-    
+
     if (page) {
       queryParams.page = parseInt(page);
     }
-    
+
     const effectiveLimit = limit ? parseInt(limit) : 100;
     queryParams.limit = effectiveLimit;
 
@@ -903,7 +903,7 @@ exports.getDetrackJobsWithFilters = async (req, res) => {
     let filteredJobs = mappedJobs;
     if (targetGroupId) {
       const beforeFilter = mappedJobs.length;
-      filteredJobs = mappedJobs.filter(job => 
+      filteredJobs = mappedJobs.filter(job =>
         job.groupId === targetGroupId || job.group_id === targetGroupId
       );
       console.log(`🔒 Filtered ${beforeFilter} jobs to ${filteredJobs.length} jobs for group: ${targetGroupId}`);
@@ -920,49 +920,49 @@ exports.getDetrackJobsWithFilters = async (req, res) => {
       // ✅ For customers: We need to get the total count for this group
       // Option 1: If Detrack supports group_id filter, use it
       // Option 2: Count all jobs for this group by fetching all pages
-      
+
       // For now, let's use the filtered count from the current page
       // BUT this is only the count for the current page, not the total
       // So we need to fetch ALL pages for customers to get correct total
-      
+
       // ✅ SIMPLE FIX: Fetch all pages for customers to get correct total
       try {
         let allGroupJobs = [];
         let currentPageTemp = 1;
         let hasNextTemp = true;
         let safetyLimit = 0;
-        
+
         // Fetch all pages (with safety limit of 20 pages)
         while (hasNextTemp && safetyLimit < 20) {
-          const tempParams = { 
-            ...queryParams, 
-            page: currentPageTemp, 
-            limit: 100 
+          const tempParams = {
+            ...queryParams,
+            page: currentPageTemp,
+            limit: 100
           };
-          
+
           const tempResponse = await DetrackService.getJobsWithFilters(tempParams);
-          
+
           if (tempResponse?.data && tempResponse.data.length > 0) {
             const tempJobs = tempResponse.data.map(job => mapDetrackJobToBooking(job));
-            const groupJobs = tempJobs.filter(job => 
+            const groupJobs = tempJobs.filter(job =>
               job.groupId === targetGroupId || job.group_id === targetGroupId
             );
             allGroupJobs = allGroupJobs.concat(groupJobs);
           }
-          
+
           hasNextTemp = tempResponse?.links?.next !== null && tempResponse.data?.length > 0;
           currentPageTemp++;
           safetyLimit++;
         }
-        
+
         totalCount = allGroupJobs.length;
         console.log(`📊 Total jobs for group ${targetGroupId}: ${totalCount}`);
-        
+
         // ✅ Apply pagination to the filtered results
         const startIndex = (parseInt(page || 1) - 1) * itemsPerPage;
         const endIndex = Math.min(startIndex + itemsPerPage, allGroupJobs.length);
         filteredJobs = allGroupJobs.slice(startIndex, endIndex);
-        
+
       } catch (error) {
         console.error('Error counting group jobs:', error);
         // Fallback: use the filtered count from the current page
@@ -1031,7 +1031,7 @@ exports.cancelJob = async (req, res) => {
 
     // 3. If job doesn't exist in either, return error
     if (!job && !detrackJob) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: 'Job not found',
         message: `No job found with DO number: ${doNumber}`
       });
@@ -1039,7 +1039,7 @@ exports.cancelJob = async (req, res) => {
 
     // 4. Check if job is already completed or cancelled
     const currentStatus = job?.status || detrackJob?.status || detrackJob?.primary_job_status || '';
-    
+
     if (currentStatus === 'completed' || currentStatus === 'delivered') {
       return res.status(400).json({
         error: 'Cannot cancel completed job',
@@ -1144,7 +1144,7 @@ exports.updateJob = async (req, res) => {
     }
 
     if (!detrackJob) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: 'Job not found in Detrack',
         message: `No job found with DO number: ${doNumber}`
       });
@@ -1168,7 +1168,7 @@ exports.updateJob = async (req, res) => {
 
     // 3. Build update payload with CORRECT field mappings
     const payload = {};
-    
+
     // Address fields
     if (updateData.address) payload.address = updateData.address;
     if (updateData.address_1) payload.address_1 = updateData.address_1;
@@ -1177,24 +1177,24 @@ exports.updateJob = async (req, res) => {
     if (updateData.state) payload.state = updateData.state;
     if (updateData.postal_code) payload.postal_code = updateData.postal_code;
     if (updateData.country) payload.country = updateData.country;
-    
+
     // Recipient fields
     if (updateData.deliver_to) payload.deliver_to = updateData.deliver_to;
-    
+
     // 👇 FIX: Use 'phone_number' for Detrack
     if (updateData.phone) payload.phone_number = updateData.phone;
-    
+
     if (updateData.instructions) payload.instructions = updateData.instructions;
     if (updateData.company_name) payload.company_name = updateData.company_name;
     if (updateData.notify_email) payload.notify_email = updateData.notify_email;
     if (updateData.time_window) payload.time_window = updateData.time_window;
     if (updateData.date) payload.date = updateData.date;
     if (updateData.weight) payload.weight = parseFloat(updateData.weight);
-    
+
     // 👇 FIX: Use 'number_of_shipping_labels' for Detrack
     if (updateData.boxes) payload.number_of_shipping_labels = parseInt(updateData.boxes);
     if (updateData.cartons) payload.cartons = parseInt(updateData.cartons);
-    
+
     // Also set boxes for Detrack (some versions use this)
     if (updateData.boxes) payload.boxes = String(parseInt(updateData.boxes));
 
@@ -1231,7 +1231,7 @@ exports.updateJob = async (req, res) => {
         address_1: updateData.address_1 || detrackJob.address_1 || job.address_1 || '',
         address_2: updateData.address_2 || detrackJob.address_2 || job.address_2 || '',
       };
-      
+
       await Job.update(doNumber, dbUpdateData);
       console.log(`✅ Job ${doNumber} updated in database`);
     }
@@ -1278,7 +1278,7 @@ exports.downloadPod = async (req, res) => {
     }
 
     const jobId = job.id || job._id;
-    
+
     if (!jobId) {
       return res.status(404).json({
         error: 'Job ID not found',
@@ -1289,7 +1289,7 @@ exports.downloadPod = async (req, res) => {
     console.log(`📄 Job ID: ${jobId}`);
 
     const podUrl = `https://app.detrack.com/api/v2/jobs/export/${jobId}.pdf`;
-    
+
     console.log(`📄 POD URL: ${podUrl}`);
 
     const response = await axios.get(podUrl, {
@@ -1302,7 +1302,7 @@ exports.downloadPod = async (req, res) => {
     });
 
     const contentType = response.headers['content-type'] || 'application/pdf';
-    
+
     if (!contentType.includes('pdf') && !contentType.includes('application/octet-stream')) {
       console.log('⚠️ Unexpected content type:', contentType);
     }
@@ -1316,7 +1316,7 @@ exports.downloadPod = async (req, res) => {
 
   } catch (error) {
     console.error('❌ Download POD error:', error.message);
-    
+
     if (error.response?.status === 404) {
       return res.status(404).json({
         error: 'POD not available',
@@ -1421,7 +1421,7 @@ exports.getBoxStatus = async (req, res) => {
   try {
     // ✅ FIX: Decode the DO number from URL parameter
     let do_number = req.params.do_number;
-    
+
     if (do_number) {
       try {
         do_number = decodeURIComponent(do_number);
@@ -1430,7 +1430,7 @@ exports.getBoxStatus = async (req, res) => {
         console.log(`⚠️ Could not decode do_number: ${do_number}`);
       }
     }
-    
+
     const userId = req.user.id;
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
@@ -1457,25 +1457,26 @@ exports.getBoxStatus = async (req, res) => {
     // If job not in database, try Detrack
     if (!job) {
       console.log(`📡 Job ${do_number} not in DB, checking Detrack...`);
-      
+
       try {
         const detrackJob = await DetrackService.getJobByDoNumber(do_number);
-        
+
         if (!detrackJob) {
-          return res.status(404).json({ 
+          return res.status(404).json({
             error: 'Job not found in Detrack or database',
             do_number: do_number
           });
         }
 
         // Generate barcodes from Detrack data
-        const shippingLabels = detrackJob.number_of_shipping_labels || 
-                              detrackJob.cartons || 
-                              detrackJob.boxes || 1;
-        
+        const shippingLabels = detrackJob.number_of_shipping_labels ||
+          detrackJob.cartons ||
+          detrackJob.boxes || 1;
+
         let barcodes = [];
         for (let i = 0; i < shippingLabels; i++) {
-          barcodes.push(`${do_number}-${String(i + 1).padStart(2, '0')}`);
+          // ✅ REMOVE padStart(2, '0')
+          barcodes.push(`${doNumber}-${i + 1}`);
         }
 
         let scans = [];
@@ -1550,7 +1551,7 @@ exports.getBoxStatus = async (req, res) => {
 
       } catch (detrackError) {
         console.error(`❌ Failed to fetch job ${do_number} from Detrack:`, detrackError.message);
-        return res.status(404).json({ 
+        return res.status(404).json({
           error: 'Job not found',
           do_number: do_number,
           details: detrackError.message
@@ -1611,12 +1612,12 @@ exports.scanBox = async (req, res) => {
     // ✅ FIX: Get and decode do_number if it was URL-encoded
     let do_number = req.body.do_number;
     let barcode = req.body.barcode;
-    
+
     // If do_number was passed as URL parameter (not likely, but safe)
     if (req.params.do_number) {
       do_number = decodeURIComponent(req.params.do_number);
     }
-    
+
     // ✅ Decode the DO number in case it was encoded
     if (do_number && typeof do_number === 'string') {
       try {
@@ -1626,7 +1627,7 @@ exports.scanBox = async (req, res) => {
         console.log(`⚠️ Could not decode do_number: ${do_number}`);
       }
     }
-    
+
     // ✅ Also decode barcode if needed
     if (barcode && typeof barcode === 'string') {
       try {
@@ -1637,15 +1638,15 @@ exports.scanBox = async (req, res) => {
     }
 
     console.log(`📦 Scanning box: ${barcode} for job: ${do_number}`);
-    
+
     const location = req.body.location || 'Warehouse';
     const userId = req.user.id;
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
 
     if (!do_number || !barcode) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: do_number and barcode' 
+      return res.status(400).json({
+        error: 'Missing required fields: do_number and barcode'
       });
     }
 
@@ -1675,13 +1676,14 @@ exports.scanBox = async (req, res) => {
         const detrackJob = await DetrackService.getJobByDoNumber(do_number);
         if (detrackJob) {
           // Sync job to database first
-          const shippingLabels = detrackJob.number_of_shipping_labels || 
-                                detrackJob.cartons || 
-                                detrackJob.boxes || 1;
+          const shippingLabels = detrackJob.number_of_shipping_labels ||
+            detrackJob.cartons ||
+            detrackJob.boxes || 1;
           let barcodes = [];
-          for (let i = 0; i < shippingLabels; i++) {
-            barcodes.push(`${do_number}-${String(i + 1).padStart(2, '0')}`);
-          }
+         for (let i = 0; i < shippingLabels; i++) {
+  // ✅ REMOVE padStart(2, '0')
+  barcodes.push(`${doNumber}-${i + 1}`);
+}
 
           const jobData = {
             do_number: do_number,
@@ -1725,7 +1727,7 @@ exports.scanBox = async (req, res) => {
         }
       } catch (syncError) {
         console.error(`❌ Failed to sync job ${do_number}:`, syncError.message);
-        return res.status(404).json({ 
+        return res.status(404).json({
           error: 'Job not found. Please generate labels first.',
           do_number: do_number
         });
@@ -1733,7 +1735,7 @@ exports.scanBox = async (req, res) => {
     }
 
     if (!job) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: 'Job not found. Please generate labels first.',
         do_number: do_number
       });
@@ -1752,7 +1754,7 @@ exports.scanBox = async (req, res) => {
 
     // Check if barcode is valid for this job
     if (!barcodes.includes(barcode)) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Invalid barcode for this job',
         barcode: barcode,
         expectedBarcodes: barcodes

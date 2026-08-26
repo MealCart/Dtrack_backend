@@ -534,9 +534,9 @@ exports.getJobScanDetails = async (req, res) => {
 
             // Generate barcodes based on shipping labels count
             const barcodes = [];
-            for (let i = 0; i < shippingLabels; i++) {
-                barcodes.push(`${doNumber}-${String(i + 1).padStart(2, '0')}`);
-            }
+          for (let i = 0; i < shippingLabels; i++) {
+  barcodes.push(`${doNumber}-${i + 1}`);  // ✅ REMOVED padStart
+}
 
             // Build barcode status (all not scanned since not in database)
             const barcodeStatus = barcodes.map(barcode => ({
@@ -794,11 +794,12 @@ exports.getScanReportData = async (date) => {
             const labelCount = barcodes.length > 0 ? barcodes.length : shippingLabels;
             
             // 👇 FIX: If barcodes is empty but we have shippingLabels, generate them
-            if (barcodes.length === 0 && shippingLabels > 0) {
-                for (let i = 0; i < shippingLabels; i++) {
-                    barcodes.push(doNumber + '-' + String(i + 1).padStart(2, '0'));
-                }
-            }
+          if (barcodes.length === 0 && shippingLabels > 0) {
+  for (let i = 0; i < shippingLabels; i++) {
+    // ✅ REMOVE padStart(2, '0')
+    barcodes.push(doNumber + '-' + (i + 1));
+  }
+}
 
             const scannedCount = scannedBarcodes.length;
             const unscannedCount = labelCount - scannedCount;

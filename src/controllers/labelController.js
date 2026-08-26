@@ -32,23 +32,21 @@ exports.generateLabels = async (req, res) => {
 
     // ===== STEP 1: Check if job exists in database =====
     let job = await Job.findByDoNumberAny(doNumber);
-    let finalBarcodes = barcodes || [];
+    let finalBarcodes = [];
     let finalCustomerName = customerName;
     let finalAddress = address;
     let finalCompanyName = companyName || '';
     let finalPhone = phone || '';
     let finalInstructions = instructions || '';
     
-    // 👇 Variables for state, city, postcode
     let finalState = '';
     let finalCity = '';
     let finalPostcode = '';
 
-    // ===== STEP 2: If job doesn't exist OR we need state data, fetch from Detrack =====
+    // ===== STEP 2: Fetch from Detrack =====
     let detrackJob = null;
     
     try {
-      // Always fetch from Detrack to get the latest state data
       detrackJob = await DetrackService.getJobByDoNumber(doNumber);
       
       if (detrackJob) {
@@ -57,47 +55,51 @@ exports.generateLabels = async (req, res) => {
         console.log(`📍 City from Detrack: ${detrackJob.city}`);
         console.log(`📍 Postal Code from Detrack: ${detrackJob.postal_code}`);
         
-        // 👇 EXTRACT STATE, CITY, POSTCODE FROM DETRACK
         finalState = detrackJob.state || '';
         finalCity = detrackJob.city || '';
         finalPostcode = detrackJob.postal_code || '';
         
-        // If we don't have barcodes, generate them from Detrack data
-        if (!finalBarcodes || finalBarcodes.length === 0) {
-          const shippingLabels = detrackJob.number_of_shipping_labels || 
-                                detrackJob.cartons || 
-                                detrackJob.boxes || 1;
-          finalBarcodes = generateBarcodes(doNumber, shippingLabels);
-        }
+        // ===== ✅ FIX: ALWAYS regenerate barcodes without leading zeros =====
+        const shippingLabels = detrackJob.number_of_shipping_labels || 
+                              detrackJob.cartons || 
+                              detrackJob.boxes || 1;
+        finalBarcodes = generateBarcodes(doNumber, shippingLabels);
+        console.log(`🔄 Regenerated ${finalBarcodes.length} barcodes without leading zeros:`, finalBarcodes);
         
         // Use Detrack data as fallback for missing fields
-        if (!finalCustomerName || finalCustomerName === 'Unknown') {
-          finalCustomerName = detrackJob.deliver_to_collect_from || 
-                             detrackJob.deliver_to || 
-                             customerName || 
-                             'Unknown';
-        }
-        if (!finalAddress) {
-          finalAddress = detrackJob.address || address || '';
-        }
-        if (!finalCompanyName) {
-          finalCompanyName = detrackJob.company_name || companyName || '';
-        }
-        if (!finalPhone) {
-          finalPhone = detrackJob.phone || detrackJob.phone_number || phone || '';
-        }
-        if (!finalInstructions) {
-          finalInstructions = detrackJob.instructions || instructions || '';
-        }
+        finalCustomerName = detrackJob.deliver_to_collect_from || 
+                           detrackJob.deliver_to || 
+                           customerName || 
+                           'Unknown';
+        finalAddress = detrackJob.address || address || '';
+        finalCompanyName = detrackJob.company_name || companyName || '';
+        finalPhone = detrackJob.phone || detrackJob.phone_number || phone || '';
+        finalInstructions = detrackJob.instructions || instructions || '';
       } else {
         console.log(`⚠️ Job ${doNumber} not found in Detrack`);
       }
     } catch (detrackError) {
       console.error('❌ Failed to fetch job from Detrack:', detrackError.message);
-      // Continue with what we have - don't fail the label generation
     }
 
-    // ===== STEP 3: If job doesn't exist in DB, create it =====
+    // ===== STEP 3: If no Detrack data, use job from database =====
+    if (!detrackJob && job) {
+      console.log(`✅ Using job from local DB: ${doNumber}`);
+      
+      // ✅ Regenerate barcodes from job's box count
+      const boxCount = parseInt(job.boxes) || 1;
+      finalBarcodes = generateBarcodes(doNumber, boxCount);
+      console.log(`🔄 Regenerated ${finalBarcodes.length} barcodes from DB boxes (${boxCount}):`, finalBarcodes);
+      
+      finalCustomerName = finalCustomerName || job.customer_name || job.recipient_name || 'Unknown';
+      finalAddress = finalAddress || job.delivery_address || '';
+      finalCompanyName = finalCompanyName || job.customer_company || '';
+      finalPhone = finalPhone || job.phone || job.recipient_phone || '';
+      finalInstructions = finalInstructions || job.special_instructions || job.instructions || '';
+      finalPostcode = finalPostcode || job.postcode || '';
+    }
+
+    // ===== STEP 4: If job doesn't exist in DB, create it =====
     if (!job && detrackJob) {
       console.log(`📦 Creating job ${doNumber} in local database...`);
       
@@ -134,35 +136,27 @@ exports.generateLabels = async (req, res) => {
         console.log(`✅ Job ${doNumber} created in local database`);
       } catch (createError) {
         console.error('❌ Failed to create job in database:', createError.message);
-        // Continue - we can still generate labels without DB record
       }
-    } else if (job) {
-      console.log(`✅ Job ${doNumber} found in local DB`);
-      
-      // Use DB data as fallback for any missing fields
-      if (!finalBarcodes || finalBarcodes.length === 0) {
-        finalBarcodes = job.barcodes || [];
-        if (typeof finalBarcodes === 'string') {
-          try {
-            finalBarcodes = JSON.parse(finalBarcodes);
-          } catch (e) {
-            finalBarcodes = [];
-          }
-        }
+    } else if (job && detrackJob) {
+      // ===== UPDATE existing job with fresh barcodes =====
+      try {
+        await Job.update(doNumber, {
+          barcodes: finalBarcodes,
+          customer_name: finalCustomerName,
+          customer_company: finalCompanyName,
+          phone: finalPhone,
+          delivery_address: finalAddress,
+          postcode: finalPostcode,
+          recipient_name: finalCustomerName,
+          recipient_phone: finalPhone,
+          boxes: finalBarcodes.length,
+          state: finalState,
+          city: finalCity
+        });
+        console.log(`✅ Job ${doNumber} updated with fresh barcodes`);
+      } catch (updateError) {
+        console.error('❌ Failed to update job:', updateError.message);
       }
-      
-      // Only use DB data if we don't have Detrack data
-      if (!finalState) {
-        // Try to get state from DB if available (if we add column later)
-        // For now, state from Detrack is our primary source
-      }
-      
-      finalCustomerName = finalCustomerName || job.customer_name || job.recipient_name || 'Unknown';
-      finalAddress = finalAddress || job.delivery_address || '';
-      finalCompanyName = finalCompanyName || job.customer_company || '';
-      finalPhone = finalPhone || job.phone || job.recipient_phone || '';
-      finalInstructions = finalInstructions || job.special_instructions || job.instructions || '';
-      finalPostcode = finalPostcode || job.postcode || '';
     }
 
     if (!finalBarcodes || finalBarcodes.length === 0) {
@@ -173,9 +167,9 @@ exports.generateLabels = async (req, res) => {
     }
 
     console.log(`📦 Generating ${finalBarcodes.length} labels for ${doNumber}`);
-    console.log(`📍 State: "${finalState}", City: "${finalCity}", Postcode: "${finalPostcode}"`);
+    console.log(`📍 Barcodes:`, finalBarcodes);
 
-    // ===== Generate the PDF with state data =====
+    // ===== Generate the PDF =====
     const pdfDoc = await generateShippingLabels(
       doNumber,
       finalBarcodes,
@@ -185,9 +179,9 @@ exports.generateLabels = async (req, res) => {
       finalPhone,
       finalInstructions,
       layout || '4-per-page',
-      finalState,    // 👈 PASS STATE
-      finalPostcode, // 👈 PASS POSTCODE
-      finalCity      // 👈 PASS CITY
+      finalState,
+      finalPostcode,
+      finalCity
     );
     
     const pdfBytes = await pdfDoc.save();
@@ -210,7 +204,6 @@ exports.generateLabels = async (req, res) => {
       userId
     });
 
-    // Update job with label URL if job exists
     if (job) {
       await Job.updateLabelUrl(doNumber, fileUrl);
     }
@@ -226,9 +219,9 @@ exports.generateLabels = async (req, res) => {
       labelCount: finalBarcodes.length,
       barcodes: finalBarcodes,
       synced: !job,
-      state: finalState,      // 👈 Return for debugging
-      city: finalCity,        // 👈 Return for debugging
-      postcode: finalPostcode // 👈 Return for debugging
+      state: finalState,
+      city: finalCity,
+      postcode: finalPostcode
     });
 
   } catch (error) {
@@ -239,9 +232,6 @@ exports.generateLabels = async (req, res) => {
     });
   }
 };
-
-// ===== GENERATE AND DOWNLOAD LABELS DIRECTLY =====
-// src/controllers/labelController.js
 
 // ===== GENERATE AND DOWNLOAD LABELS DIRECTLY =====
 exports.generateAndDownloadLabels = async (req, res) => {
@@ -274,6 +264,12 @@ exports.generateAndDownloadLabels = async (req, res) => {
     let finalState = reqState || '';
     let finalCity = reqCity || '';
     let finalPostcode = reqPostcode || '';
+    let finalBarcodes = [];
+    let finalCustomerName = customerName;
+    let finalAddress = address;
+    let finalCompanyName = companyName || '';
+    let finalPhone = phone || '';
+    let finalInstructions = instructions || '';
 
     try {
       detrackJob = await DetrackService.getJobByDoNumber(doNumber);
@@ -283,6 +279,22 @@ exports.generateAndDownloadLabels = async (req, res) => {
         finalCity = detrackJob.city || reqCity || '';
         finalPostcode = detrackJob.postal_code || reqPostcode || '';
         console.log(`📍 State from Detrack: "${finalState}"`);
+        
+        // ===== ✅ FIX: ALWAYS regenerate barcodes without leading zeros =====
+        const shippingLabels = detrackJob.number_of_shipping_labels || 
+                              detrackJob.cartons || 
+                              detrackJob.boxes || 1;
+        finalBarcodes = generateBarcodes(doNumber, shippingLabels);
+        console.log(`🔄 Regenerated ${finalBarcodes.length} barcodes without leading zeros:`, finalBarcodes);
+        
+        finalCustomerName = detrackJob.deliver_to_collect_from || 
+                           detrackJob.deliver_to || 
+                           customerName || 
+                           'Unknown';
+        finalAddress = detrackJob.address || address || '';
+        finalCompanyName = detrackJob.company_name || companyName || '';
+        finalPhone = detrackJob.phone || detrackJob.phone_number || phone || '';
+        finalInstructions = detrackJob.instructions || instructions || '';
       }
     } catch (error) {
       console.error('❌ Failed to fetch job from Detrack:', error.message);
@@ -290,61 +302,23 @@ exports.generateAndDownloadLabels = async (req, res) => {
 
     // ===== CHECK IF JOB EXISTS IN DB =====
     let job = await Job.findByDoNumberAny(doNumber);
-    let finalBarcodes = barcodes || [];
-    let finalCustomerName = customerName;
-    let finalAddress = address;
-    let finalCompanyName = companyName || '';
-    let finalPhone = phone || '';
-    let finalInstructions = instructions || '';
 
-    // ===== USE DETRACK DATA AS FALLBACK =====
-    if (detrackJob) {
-      const shippingLabels = detrackJob.number_of_shipping_labels || 
-                            detrackJob.cartons || 
-                            detrackJob.boxes || 1;
+    // ===== If no Detrack data, use job from database =====
+    if (!detrackJob && job) {
+      console.log(`✅ Using job from local DB: ${doNumber}`);
       
-      if (!finalBarcodes || finalBarcodes.length === 0) {
-        finalBarcodes = generateBarcodes(doNumber, shippingLabels);
-      }
-      
-      if (!finalCustomerName || finalCustomerName === 'Unknown') {
-        finalCustomerName = detrackJob.deliver_to_collect_from || 
-                           detrackJob.deliver_to || 
-                           customerName || 
-                           'Unknown';
-      }
-      if (!finalAddress) {
-        finalAddress = detrackJob.address || address || '';
-      }
-      if (!finalCompanyName) {
-        finalCompanyName = detrackJob.company_name || companyName || '';
-      }
-      if (!finalPhone) {
-        finalPhone = detrackJob.phone || detrackJob.phone_number || phone || '';
-      }
-      if (!finalInstructions) {
-        finalInstructions = detrackJob.instructions || instructions || '';
-      }
-    }
-
-    // ===== USE DB DATA AS FALLBACK =====
-    if (job) {
-      if (!finalBarcodes || finalBarcodes.length === 0) {
-        finalBarcodes = job.barcodes || [];
-        if (typeof finalBarcodes === 'string') {
-          try {
-            finalBarcodes = JSON.parse(finalBarcodes);
-          } catch (e) {
-            finalBarcodes = [];
-          }
-        }
-      }
+      const boxCount = parseInt(job.boxes) || 1;
+      finalBarcodes = generateBarcodes(doNumber, boxCount);
+      console.log(`🔄 Regenerated ${finalBarcodes.length} barcodes from DB boxes (${boxCount}):`, finalBarcodes);
       
       finalCustomerName = finalCustomerName || job.customer_name || job.recipient_name || 'Unknown';
       finalAddress = finalAddress || job.delivery_address || '';
       finalCompanyName = finalCompanyName || job.customer_company || '';
       finalPhone = finalPhone || job.phone || job.recipient_phone || '';
       finalInstructions = finalInstructions || job.special_instructions || job.instructions || '';
+      finalState = finalState || job.state || '';
+      finalCity = finalCity || job.city || '';
+      finalPostcode = finalPostcode || job.postcode || '';
     }
 
     if (!finalBarcodes || finalBarcodes.length === 0) {
@@ -355,6 +329,7 @@ exports.generateAndDownloadLabels = async (req, res) => {
     }
 
     console.log(`📍 Generating labels with state: "${finalState}"`);
+    console.log(`📍 Barcodes:`, finalBarcodes);
 
     // ===== GENERATE PDF =====
     const pdfDoc = await generateShippingLabels(
@@ -376,7 +351,7 @@ exports.generateAndDownloadLabels = async (req, res) => {
     console.log(`✅ PDF generated with state: "${finalState}" for ${doNumber}, size: ${pdfBytes.length} bytes`);
 
     // ============================================================
-    // 👇 NEW: SAVE TO DATABASE (SYNC JOB AND LABEL)
+    // SAVE TO DATABASE (SYNC JOB AND LABEL)
     // ============================================================
     
     // 1. SAVE THE LABEL RECORD
@@ -403,7 +378,6 @@ exports.generateAndDownloadLabels = async (req, res) => {
 
     // 3. CREATE OR UPDATE JOB IN DATABASE
     try {
-      // Check if job exists in DB
       const existingJob = await Job.findByDoNumberAny(doNumber);
       
       if (!existingJob) {
@@ -432,7 +406,7 @@ exports.generateAndDownloadLabels = async (req, res) => {
           user_id: userId,
           state: finalState,
           city: finalCity,
-          label_url: fileUrl  // 👈 Add the label URL
+          label_url: fileUrl
         };
         
         await Job.create(newJobData);
@@ -469,7 +443,6 @@ exports.generateAndDownloadLabels = async (req, res) => {
       
     } catch (dbError) {
       console.error(`❌ Failed to save job to database:`, dbError.message);
-      // Don't fail the PDF download, just log the error
     }
 
     // ============================================================
@@ -491,6 +464,7 @@ exports.generateAndDownloadLabels = async (req, res) => {
     });
   }
 };
+
 // ===== DOWNLOAD SHIPPING LABELS =====
 exports.downloadLabels = (req, res) => {
   try {

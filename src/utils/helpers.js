@@ -106,7 +106,8 @@ const getValidDate = (excelDate) => {
 const generateBarcodes = (doNumber, totalBoxes) => {
   const barcodes = [];
   for (let i = 0; i < totalBoxes; i++) {
-    barcodes.push(`${doNumber}-${String(i + 1).padStart(2, '0')}`);
+    // ✅ REMOVE padStart(2, '0') - just use the number as-is
+    barcodes.push(`${doNumber}-${i + 1}`);
   }
   return barcodes;
 };
