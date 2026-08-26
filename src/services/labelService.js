@@ -364,12 +364,22 @@ const drawCustomerNameSection = (page, x, y, width, height, customerName, fonts)
   });
 };
 
+// ===== FIXED: Address section - ONLY shows address data, NO instructions =====
 const drawAddressSection = (page, x, y, width, height, data, fonts, logoImage) => {
   const { font, fontBold } = fonts;
+  // ONLY extract address-related fields - NO instructions
   const { address, companyName, phone, state, postcode, city } = data;
 
-  // 👇 DEBUG: Log state value
-  console.log('📍 STATE VALUE RECEIVED:', state);
+  // DEBUG: Log what's being passed to address section
+  console.log('📦 ADDRESS SECTION DATA:', {
+    address,
+    companyName,
+    phone,
+    state,
+    postcode,
+    city,
+    // Explicitly NOT including instructions
+  });
 
   page.drawRectangle({
     x, y, width, height,
@@ -382,13 +392,15 @@ const drawAddressSection = (page, x, y, width, height, data, fonts, logoImage) =
   const contentWidth = width - logoSectionWidth;
   drawVerticalLine(page, x + contentWidth, y, y + height, 0.8);
 
-  const paddingX = 8;
-  const paddingTop = 8;
-  const paddingBottom = 6;
+  const paddingX = 10;
+  const paddingTop = 14;
+  const paddingBottom = 8;
+  
   const textX = x + paddingX;
   const availableTextWidth = contentWidth - paddingX * 2;
   const availableTextHeight = height - paddingTop - paddingBottom;
 
+  // Clean the address data - ensure no instructions leak in
   const cleanCompany = companyName ? String(companyName).replace(/\s+/g, ' ').trim() : '';
   const cleanAddress = address ? String(address).replace(/\s+/g, ' ').trim() : '';
   const cleanPhone = phone ? String(phone).replace(/\s+/g, ' ').trim() : '';
@@ -440,10 +452,12 @@ const drawAddressSection = (page, x, y, width, height, data, fonts, logoImage) =
   content = calculateContent();
 
   let textY = y + height - paddingTop - companySize;
+  const minY = y + 4;
 
   if (cleanCompany) {
     const companyLines = wrapText(cleanCompany, fontBold, companySize, availableTextWidth);
     for (const line of companyLines) {
+      if (textY < minY) textY = minY;
       page.drawText(line, { x: textX, y: textY, size: companySize, font: fontBold, color: BLACK });
       textY -= companySize * 1.12;
     }
@@ -453,6 +467,7 @@ const drawAddressSection = (page, x, y, width, height, data, fonts, logoImage) =
   if (cleanAddress) {
     const addressLines = wrapText(cleanAddress, fontBold, addressSize, availableTextWidth);
     for (const line of addressLines) {
+      if (textY < minY) textY = minY;
       page.drawText(line, { x: textX, y: textY, size: addressSize, font: fontBold, color: BLACK });
       textY -= addressSize * 1.12;
     }
@@ -463,6 +478,7 @@ const drawAddressSection = (page, x, y, width, height, data, fonts, logoImage) =
     const fittedLocationSize = fitTextSize(locationText, fontBold, availableTextWidth, locationSize, 5.5);
     const locationLines = wrapText(locationText, fontBold, fittedLocationSize, availableTextWidth);
     for (const line of locationLines) {
+      if (textY < minY) textY = minY;
       page.drawText(line, { x: textX, y: textY, size: fittedLocationSize, font: fontBold, color: BLACK });
       textY -= fittedLocationSize * 1.15;
     }
@@ -473,26 +489,21 @@ const drawAddressSection = (page, x, y, width, height, data, fonts, logoImage) =
     const fittedPhoneSize = fitTextSize(cleanPhone, fontBold, availableTextWidth, phoneSize, 6.5);
     const phoneLines = wrapText(cleanPhone, fontBold, fittedPhoneSize, availableTextWidth);
     for (const line of phoneLines) {
+      if (textY < minY) textY = minY;
       page.drawText(line, { x: textX, y: textY, size: fittedPhoneSize, font: fontBold, color: BLACK });
       textY -= fittedPhoneSize * 1.12;
     }
   }
 
-  // ============================================================
-  // LOGO AREA - STATE ABOVE LOGO (FIXED)
-  // ============================================================
+  // Logo area with state
   const logoAreaX = x + contentWidth;
   const logoAreaWidth = logoSectionWidth;
   const logoAreaHeight = height;
 
-  // ---- SECTION 1: STATE (Top 50% of logo area) ----
-  // 👇 FIX: Use state directly from data
   let displayState = state ? String(state).trim() : '';
   
-  // 👇 FALLBACK: If state is empty, try to extract from locationText
   if (!displayState && locationText) {
     const parts = locationText.split(' ');
-    // Look for common state names
     const commonStates = ['NSW', 'VIC', 'QLD', 'WA', 'SA', 'TAS', 'ACT', 'NT', 
                           'New South Wales', 'Victoria', 'Queensland', 'Western Australia', 
                           'South Australia', 'Tasmania', 'Australian Capital Territory', 
@@ -505,17 +516,12 @@ const drawAddressSection = (page, x, y, width, height, data, fonts, logoImage) =
     }
   }
   
-  // 👇 FINAL FALLBACK: Show "N/A" if still empty
   if (!displayState) {
     displayState = 'N/A';
   }
 
-  console.log('📍 DISPLAY STATE:', displayState);
-
-  // State section (top half)
   const stateSectionHeight = logoAreaHeight * 0.48;
 
-  // Draw state section with background
   page.drawRectangle({
     x: logoAreaX,
     y: y + logoAreaHeight - stateSectionHeight,
@@ -526,7 +532,6 @@ const drawAddressSection = (page, x, y, width, height, data, fonts, logoImage) =
     color: WHITE,
   });
 
-  // Draw state text
   const stateMaxWidth = logoAreaWidth - 10;
   const stateFontSize = fitTextSize(displayState, fontBold, stateMaxWidth, Math.min(24, stateSectionHeight * 0.7), 8);
   const stateTextHeight = stateFontSize;
@@ -539,7 +544,6 @@ const drawAddressSection = (page, x, y, width, height, data, fonts, logoImage) =
     color: BLACK,
   });
 
-  // Draw horizontal divider line between state and logo
   drawHorizontalLine(
     page,
     logoAreaX + 2,
@@ -548,7 +552,6 @@ const drawAddressSection = (page, x, y, width, height, data, fonts, logoImage) =
     0.6
   );
 
-  // ---- SECTION 2: LOGO (Bottom half) ----
   const logoSectionHeight = logoAreaHeight * 0.48;
   const logoSectionY = y + 2;
 
@@ -576,19 +579,13 @@ const drawAddressSection = (page, x, y, width, height, data, fonts, logoImage) =
       console.error('Error drawing logo:', error);
     }
   }
-
-  // 👇 DEBUG: Add state label below logo for verification (remove after testing)
-  // page.drawText(`State: ${displayState}`, {
-  //   x: logoAreaX + 4,
-  //   y: y + 2,
-  //   size: 5,
-  //   font: font,
-  //   color: GRAY,
-  // });
 };
 
+// ===== FIXED: Instructions section - ONLY shows instructions =====
 const drawInstructionsSection = (page, x, y, width, height, instructions, fonts) => {
   const { font, fontBold } = fonts;
+
+  const hasInstructions = instructions && String(instructions).trim();
 
   page.drawRectangle({
     x, y, width, height,
@@ -603,7 +600,7 @@ const drawInstructionsSection = (page, x, y, width, height, instructions, fonts)
     color: BLACK,
   });
 
-  if (instructions && String(instructions).trim()) {
+  if (hasInstructions) {
     const padding = 9;
     const maxWidth = width - padding * 2;
     const titleSpace = 24;
@@ -624,7 +621,13 @@ const drawInstructionsSection = (page, x, y, width, height, instructions, fonts)
       textY -= fitted.lineHeight;
     }
   } else {
-    drawCenteredText(page, '', x + width / 2, y + height / 2, { font, size: 8 });
+    const noInstructionsText = 'No special instructions';
+    const fontSize = Math.min(7.5, height * 0.12);
+    drawCenteredText(page, noInstructionsText, x + width / 2, y + height / 2 - fontSize / 2, {
+      font,
+      size: fontSize,
+      color: GRAY,
+    });
   }
 };
 
@@ -750,13 +753,23 @@ const generateLabelOnPage = async (page, x, y, width, height, data) => {
   drawCustomerNameSection(page, x + margin, nameY, usableWidth, nameSectionHeight, customerName, fonts);
   currentY = nameY;
 
-  // 3. ADDRESS SECTION
+  // 3. ADDRESS SECTION - ONLY ADDRESS DATA, NO INSTRUCTIONS
   const addressY = currentY - addressSectionHeight;
   const logoImage = await loadLogo(page.doc);
-  drawAddressSection(page, x + margin, addressY, usableWidth, addressSectionHeight, data, fonts, logoImage);
+  // Create a clean address data object with ONLY address fields
+  const addressData = {
+    address: address || '',
+    companyName: companyName || '',
+    phone: phone || '',
+    state: state || '',
+    postcode: postcode || '',
+    city: city || '',
+    // EXPLICITLY EXCLUDE INSTRUCTIONS
+  };
+  drawAddressSection(page, x + margin, addressY, usableWidth, addressSectionHeight, addressData, fonts, logoImage);
   currentY = addressY;
 
-  // 4. INSTRUCTIONS
+  // 4. INSTRUCTIONS SECTION - SEPARATE BOX
   const instructionsY = currentY - instructionsSectionHeight;
   drawInstructionsSection(page, x + margin, instructionsY, usableWidth, instructionsSectionHeight, instructions, fonts);
   currentY = instructionsY;
