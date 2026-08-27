@@ -1,4 +1,5 @@
 // backend/src/utils/helpers.js
+const { parse, format, isValid } = require('date-fns');
 
 // Get value from row with fallbacks
 const getValue = (row, ...keys) => {
@@ -25,81 +26,146 @@ const getNumber = (row, ...keys) => {
   return 0;
 };
 
-// Convert Excel date to YYYY-MM-DD format (FIXED for timezone issues)
+/**
+ * Convert various date formats to YYYY-MM-DD using date-fns
+ * 
+ * CRITICAL: This function tries DD/MM/YYYY FIRST (Australian format)
+ * because that's what Australian Excel files typically use.
+ * 
+ * Supports:
+ * - DD/MM/YYYY (Australian/European format) - PRIORITY
+ * - DD-MM-YYYY
+ * - DD.MM.YYYY
+ * - DD/MM/YY (with 2-digit year)
+ * - MM/DD/YYYY (US format) - fallback
+ * - YYYY-MM-DD
+ * - Excel serial numbers
+ * - Date objects
+ */
 const getValidDate = (excelDate) => {
-  let dateStr;
+  // If no value, return today's date
+  if (!excelDate) {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
 
+  // If it's a number, it's an Excel serial date
   if (typeof excelDate === 'number') {
-    // Excel date number to date (using local timezone)
-    const excelEpoch = new Date(1899, 11, 30);
-    const date = new Date(excelEpoch.getTime() + excelDate * 86400000);
-    // Use local date methods to avoid timezone issues
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    dateStr = `${year}-${month}-${day}`;
-  } else if (typeof excelDate === 'string') {
-    // Remove any time part
-    const datePart = excelDate.split(' ')[0];
-    
-    // Check if it's MM/DD/YYYY format
-    const parts = datePart.split('/');
-    if (parts.length === 3) {
-      // Assume MM/DD/YYYY
-      const month = parseInt(parts[0]);
-      const day = parseInt(parts[1]);
-      const year = parseInt(parts[2]);
-      
-      // Validate the date parts
-      if (!isNaN(month) && !isNaN(day) && !isNaN(year) && year > 1900) {
-        // Create date using local timezone (no UTC conversion)
-        const date = new Date(year, month - 1, day);
-        const y = date.getFullYear();
-        const m = String(date.getMonth() + 1).padStart(2, '0');
-        const d = String(date.getDate()).padStart(2, '0');
-        dateStr = `${y}-${m}-${d}`;
-      } else {
-        // If parsing fails, use the string as-is
-        dateStr = datePart;
+    try {
+      const milliseconds = (excelDate - 25569) * 86400 * 1000;
+      const date = new Date(milliseconds);
+      if (!isNaN(date.getTime()) && isValid(date)) {
+        return format(date, 'yyyy-MM-dd');
       }
-    } else {
-      // Try parsing as other formats
-      try {
-        const parsed = new Date(datePart);
-        if (!isNaN(parsed.getTime())) {
-          const year = parsed.getFullYear();
-          const month = String(parsed.getMonth() + 1).padStart(2, '0');
-          const day = String(parsed.getDate()).padStart(2, '0');
-          dateStr = `${year}-${month}-${day}`;
-        } else {
-          dateStr = datePart;
-        }
-      } catch (e) {
-        dateStr = datePart;
-      }
+    } catch (e) {
+      console.error('❌ Failed to convert Excel serial date:', e);
     }
-  } else {
-    // Default to today's date
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    dateStr = `${year}-${month}-${day}`;
   }
 
-  // Ensure format is YYYY-MM-DD
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    dateStr = `${year}-${month}-${day}`;
+  // If it's already a Date object
+  if (excelDate instanceof Date) {
+    if (!isNaN(excelDate.getTime()) && isValid(excelDate)) {
+      return format(excelDate, 'yyyy-MM-dd');
+    }
   }
 
-  // REMOVED: The date validation that was changing dates
-  // We now trust the user's date input
+  // If it's a string
+  const dateStr = String(excelDate).trim();
 
-  return dateStr;
+  // Check if already in YYYY-MM-DD format
+  if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+    return dateStr;
+  }
+
+  // ============================================================
+  // TRY AUSTRALIAN FORMAT FIRST: DD/MM/YYYY (e.g., 14/01/2027)
+  // This is the most common format in Australian Excel files
+  // ============================================================
+  try {
+    const parsed = parse(dateStr, 'd/M/yyyy', new Date());
+    if (isValid(parsed)) {
+      const result = format(parsed, 'yyyy-MM-dd');
+      console.log(`📅 DD/MM/YYYY: "${dateStr}" -> "${result}"`);
+      return result;
+    }
+  } catch (e) { /* ignore */ }
+
+  // Try Australian format with 2-digit year: DD/MM/YY (e.g., 14/01/27)
+  try {
+    const parsed = parse(dateStr, 'd/M/yy', new Date());
+    if (isValid(parsed)) {
+      const result = format(parsed, 'yyyy-MM-dd');
+      console.log(`📅 DD/MM/YY: "${dateStr}" -> "${result}"`);
+      return result;
+    }
+  } catch (e) { /* ignore */ }
+
+  // Try Australian format with - or . separators: DD-MM-YYYY or DD.MM.YYYY
+  try {
+    const normalized = dateStr.replace(/[-.]/g, '/');
+    const parsed = parse(normalized, 'd/M/yyyy', new Date());
+    if (isValid(parsed)) {
+      const result = format(parsed, 'yyyy-MM-dd');
+      console.log(`📅 DD-MM-YYYY: "${dateStr}" -> "${result}"`);
+      return result;
+    }
+  } catch (e) { /* ignore */ }
+
+  // ============================================================
+  // FALLBACK: Try US format: MM/DD/YYYY (e.g., 12/31/2027)
+  // Only if Australian format failed
+  // ============================================================
+  try {
+    const parsed = parse(dateStr, 'M/d/yyyy', new Date());
+    if (isValid(parsed)) {
+      const result = format(parsed, 'yyyy-MM-dd');
+      console.log(`📅 MM/DD/YYYY: "${dateStr}" -> "${result}"`);
+      return result;
+    }
+  } catch (e) { /* ignore */ }
+
+  // Try US format with - or . separators: MM-DD-YYYY
+  try {
+    const normalized = dateStr.replace(/[-.]/g, '/');
+    const parsed = parse(normalized, 'M/d/yyyy', new Date());
+    if (isValid(parsed)) {
+      const result = format(parsed, 'yyyy-MM-dd');
+      console.log(`📅 MM-DD-YYYY: "${dateStr}" -> "${result}"`);
+      return result;
+    }
+  } catch (e) { /* ignore */ }
+
+  // Try ISO-like format: YYYY/MM/DD
+  try {
+    const normalized = dateStr.replace(/[-.]/g, '/');
+    const parsed = parse(normalized, 'yyyy/M/d', new Date());
+    if (isValid(parsed)) {
+      const result = format(parsed, 'yyyy-MM-dd');
+      console.log(`📅 YYYY/MM/DD: "${dateStr}" -> "${result}"`);
+      return result;
+    }
+  } catch (e) { /* ignore */ }
+
+  // Final fallback: try JavaScript Date parsing
+  try {
+    const date = new Date(dateStr);
+    if (!isNaN(date.getTime()) && isValid(date)) {
+      const result = format(date, 'yyyy-MM-dd');
+      console.log(`📅 Fallback parsing: "${dateStr}" -> "${result}"`);
+      return result;
+    }
+  } catch (e) { /* ignore */ }
+
+  // If all parsing fails, use today's date
+  console.log(`⚠️ Could not parse date: "${dateStr}", using today`);
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 
 // Generate barcodes for boxes
