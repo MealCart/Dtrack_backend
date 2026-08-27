@@ -12,6 +12,8 @@
     "bcrypt": "^6.0.0",
     "canvas": "^3.2.3",
     "cors": "^2.8.6",
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
     "dotenv": "^16.6.1",
     "express": "^4.22.2",
     "jsbarcode": "^3.12.3",
