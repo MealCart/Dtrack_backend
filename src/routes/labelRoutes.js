@@ -19,5 +19,5 @@ router.get('/download-labels/:filename', labelController.downloadLabels);
 router.get('/labels/:doNumber', labelController.getLabels);
 router.post('/upload-label', uploadLabel.single('label'), labelController.uploadLabel);
 router.delete('/labels/:id', labelController.deleteLabel);
-
+router.post('/generate-combined-labels', authenticate, labelController.generateCombinedLabels);
 module.exports = router;

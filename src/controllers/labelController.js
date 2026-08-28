@@ -7,6 +7,7 @@ const DetrackService = require('../services/detrackService');
 const { generateShippingLabels } = require('../services/labelService');
 const { LABELS_DIR } = require('../config/constants');
 const { generateBarcodes } = require('../utils/helpers');
+const { PDFDocument } = require('pdf-lib'); // 👈 ADD THIS LINE
 
 // ===== HELPER: Clean company name by removing business types =====
 const cleanCompanyName = (name) => {
@@ -640,5 +641,105 @@ exports.deleteLabel = async (req, res) => {
   } catch (error) {
     console.error('Delete error:', error);
     res.status(500).json({ error: 'Failed to delete label' });
+  }
+};
+exports.generateCombinedLabels = async (req, res) => {
+  try {
+    const { jobs } = req.body;
+    const userId = req.user.id;
+
+    if (!jobs || !Array.isArray(jobs) || jobs.length === 0) {
+      return res.status(400).json({
+        error: 'Jobs array is required'
+      });
+    }
+
+    console.log(`📦 Generating combined labels for ${jobs.length} jobs...`);
+
+    const pdfDoc = await PDFDocument.create();
+    let totalLabels = 0;
+    const labelData = [];
+
+    // Process each job
+    for (const jobData of jobs) {
+      const { doNumber, barcodes, customerName, address, companyName, phone, instructions, state, postcode, city } = jobData;
+      
+      if (!doNumber || !barcodes || barcodes.length === 0) {
+        console.warn(`⚠️ Skipping ${doNumber} - no barcodes`);
+        continue;
+      }
+
+      // Get label size from request or use default
+      const layout = req.body.layout || '4-per-page';
+      
+      // Generate labels for this job using the existing labelService
+      const jobPdf = await generateShippingLabels(
+        doNumber,
+        barcodes,
+        customerName,
+        address,
+        companyName,
+        phone,
+        instructions,
+        layout,
+        state,
+        postcode,
+        city
+      );
+
+      // Copy pages from job PDF to main PDF
+      const pages = await pdfDoc.copyPages(jobPdf, jobPdf.getPageIndices());
+      pages.forEach(page => {
+        pdfDoc.addPage(page);
+      });
+
+      totalLabels += barcodes.length;
+      labelData.push({
+        doNumber,
+        labelCount: barcodes.length,
+        barcodes: barcodes
+      });
+
+      console.log(`✅ Added ${barcodes.length} labels for ${doNumber}`);
+    }
+
+    if (pdfDoc.getPageCount() === 0) {
+      return res.status(400).json({
+        error: 'No labels to generate'
+      });
+    }
+
+    // Save the combined PDF
+    const pdfBytes = await pdfDoc.save();
+    const filename = `Combined_Labels_${new Date().toISOString().split('T')[0]}.pdf`;
+    const filepath = path.join(LABELS_DIR, filename);
+    fs.writeFileSync(filepath, pdfBytes);
+    const fileUrl = `/uploads/labels/${filename}`;
+
+    // Save label record in database
+    await Label.create({
+      doNumber: 'combined', // Special identifier
+      filename,
+      filepath,
+      fileUrl,
+      labelCount: totalLabels,
+      barcodes: labelData.map(d => d.barcodes).flat(),
+      userId
+    });
+
+    console.log(`✅ Combined PDF saved: ${filename} with ${totalLabels} labels`);
+
+    // Return the PDF
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdfBytes.length);
+    res.send(Buffer.from(pdfBytes));
+
+  } catch (error) {
+    console.error('❌ Error generating combined labels:', error);
+    res.status(500).json({
+      error: 'Failed to generate combined labels',
+      details: error.message
+    });
   }
 };
