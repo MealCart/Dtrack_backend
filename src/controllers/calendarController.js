@@ -3,11 +3,18 @@ const axios = require('axios');
 const { DETRACK_API_KEY } = require('../config/constants');
 
 // ===== HELPER: Fetch delivery job counts from Detrack =====
-const fetchDeliveryCounts = async (fromDate, toDate) => {
+const fetchDeliveryCounts = async (fromDate, toDate, groupId = null) => {
     try {
-        const url = `https://app.detrack.com/api/v2/dn/jobs/count?from=${fromDate}&to=${toDate}&type=Delivery`;
+        let url = `https://app.detrack.com/api/v2/dn/jobs/count?from=${fromDate}&to=${toDate}&type=Delivery`;
         
-        console.log(`📡 Fetching delivery counts from: ${url}`);
+        if (groupId) {
+            url += `&group_id=${groupId}`;
+            console.log(`📡 Fetching delivery counts with group_id: ${groupId}`);
+        } else {
+            console.log(`📡 Fetching delivery counts (ALL deliveries)`);
+        }
+        
+        console.log(`🔗 URL: ${url}`);
         
         const response = await axios.get(url, {
             headers: {
@@ -17,92 +24,13 @@ const fetchDeliveryCounts = async (fromDate, toDate) => {
             timeout: 30000
         });
         
-        console.log(`✅ Fetched delivery counts: ${Object.keys(response.data?.data || {}).length} dates`);
-        return response.data;
+        const data = response.data?.data || {};
+        const totalJobs = Object.values(data).reduce((sum, d) => sum + (d.all || 0), 0);
+        console.log(`✅ Fetched ${Object.keys(data).length} dates with ${totalJobs} total deliveries`);
+        
+        return { data };
     } catch (error) {
         console.error(`❌ Error fetching delivery counts:`, error.message);
-        if (error.response?.data) {
-            console.error('  Response:', JSON.stringify(error.response.data, null, 2));
-        }
-        return { data: {} };
-    }
-};
-
-// ===== HELPER: Fetch delivery jobs for customers (filter by group) =====
-const fetchGroupFilteredDeliveries = async (fromDate, toDate, groupId) => {
-    try {
-        console.log(`📡 Fetching deliveries for group ${groupId} from ${fromDate} to ${toDate}`);
-        
-        const url = `https://app.detrack.com/api/v2/jobs?from=${fromDate}&to=${toDate}&type=Delivery&group_id=${groupId}&limit=500`;
-        
-        const response = await axios.get(url, {
-            headers: {
-                'X-API-KEY': DETRACK_API_KEY,
-                'User-Agent': 'curl/7.68.0'
-            },
-            timeout: 30000
-        });
-        
-        const jobs = response.data?.data || [];
-        console.log(`✅ Found ${jobs.length} deliveries for group ${groupId}`);
-        
-        // Count jobs by date
-        const countsByDate = {};
-        
-        jobs.forEach(job => {
-            const date = job.date || job.scheduled_date || job.created_at?.split('T')[0];
-            if (!date) return;
-            
-            if (!countsByDate[date]) {
-                countsByDate[date] = {
-                    info_recv: 0,
-                    dispatched: 0,
-                    completed: 0,
-                    completed_partial: 0,
-                    failed: 0,
-                    on_hold: 0,
-                    return: 0,
-                    recv_at_distribution_centre: 0,
-                    all: 0,
-                    unassigned: 0,
-                    assigned: 0
-                };
-            }
-            
-            const status = job.status || job.primary_job_status || 'pending';
-            
-            // Map status to Detrack's status fields
-            const statusMap = {
-                'info_recv': 'info_recv',
-                'info_received': 'info_recv',
-                'dispatched': 'dispatched',
-                'completed': 'completed',
-                'delivered': 'completed',
-                'completed_partial': 'completed_partial',
-                'failed': 'failed',
-                'on_hold': 'on_hold',
-                'return': 'return',
-                'recv_at_distribution_centre': 'recv_at_distribution_centre'
-            };
-            
-            const mappedStatus = statusMap[status.toLowerCase()] || 'info_recv';
-            
-            if (countsByDate[date][mappedStatus] !== undefined) {
-                countsByDate[date][mappedStatus]++;
-            }
-            
-            countsByDate[date].all++;
-            
-            if (job.assign_to) {
-                countsByDate[date].assigned++;
-            } else {
-                countsByDate[date].unassigned++;
-            }
-        });
-        
-        return { data: countsByDate };
-    } catch (error) {
-        console.error(`❌ Error fetching group filtered deliveries:`, error.message);
         return { data: {} };
     }
 };
@@ -111,8 +39,6 @@ const fetchGroupFilteredDeliveries = async (fromDate, toDate, groupId) => {
 exports.getCalendarData = async (req, res) => {
     try {
         const { from, to } = req.query;
-        const userRole = req.user.role;
-        const userGroupId = req.user.group_id;
         
         if (!from || !to) {
             return res.status(400).json({
@@ -120,24 +46,30 @@ exports.getCalendarData = async (req, res) => {
             });
         }
         
-        console.log(`📅 Calendar request: ${from} to ${to}, role: ${userRole}, group: ${userGroupId || 'none'}`);
+        // 👇 DEBUG: Log the entire user object
+        console.log('🔍 Full req.user:', JSON.stringify(req.user, null, 2));
+        console.log(`📅 Calendar request: ${from} to ${to}`);
+        
+        const userRole = req.user?.role;
+        const userGroupId = req.user?.group_id;
+        
+        console.log(`👤 User: role=${userRole}, group=${userGroupId || 'none'}`);
         
         let deliveryCounts = {};
+        let groupIdUsed = null;
         
-        // For admin/staff: fetch all delivery jobs
-        if (userRole === 'admin' || userRole === 'staff') {
-            console.log('👑 Admin/Staff: Fetching all delivery counts');
-            
-            try {
-                const result = await fetchDeliveryCounts(from, to);
-                deliveryCounts = result.data || {};
-                console.log(`✅ Delivery counts: ${Object.keys(deliveryCounts).length} dates`);
-            } catch (err) {
-                console.error('❌ Failed to fetch delivery counts:', err.message);
-            }
-            
+        // 👇 Check if user is admin OR staff (explicitly)
+        const isAdminOrStaff = userRole === 'admin' || userRole === 'staff';
+        
+        if (isAdminOrStaff) {
+            console.log('👑 Admin/Staff: Fetching ALL delivery counts');
+            const result = await fetchDeliveryCounts(from, to);
+            deliveryCounts = result.data || {};
         } else {
-            // For customers: filter by group ID
+            // Customer or any other role
+            console.log(`👤 Customer: Fetching delivery counts for group ${userGroupId}`);
+            
+            // 👇 If no group_id, return empty
             if (!userGroupId) {
                 console.warn('⚠️ Customer has no group ID, returning empty data');
                 return res.json({
@@ -146,7 +78,7 @@ exports.getCalendarData = async (req, res) => {
                     meta: {
                         from,
                         to,
-                        role: userRole,
+                        role: userRole || 'unknown',
                         groupId: null,
                         dateCount: 0,
                         totalJobs: 0,
@@ -155,23 +87,28 @@ exports.getCalendarData = async (req, res) => {
                 });
             }
             
-            console.log(`👤 Customer: Fetching deliveries for group ${userGroupId}`);
-            
-            try {
-                const result = await fetchGroupFilteredDeliveries(from, to, userGroupId);
-                deliveryCounts = result.data || {};
-                console.log(`✅ Customer delivery counts: ${Object.keys(deliveryCounts).length} dates`);
-            } catch (err) {
-                console.error('❌ Failed to fetch customer deliveries:', err.message);
-            }
+            const result = await fetchDeliveryCounts(from, to, userGroupId);
+            deliveryCounts = result.data || {};
+            groupIdUsed = userGroupId;
         }
         
-        // Build response data
+        // Build response
         const responseData = {};
         let totalJobs = 0;
         
-        Object.keys(deliveryCounts).forEach(date => {
-            const data = deliveryCounts[date];
+        const startDate = new Date(from);
+        const endDate = new Date(to);
+        const currentDate = new Date(startDate);
+        const dateRange = [];
+        
+        while (currentDate <= endDate) {
+            const dateStr = currentDate.toISOString().split('T')[0];
+            dateRange.push(dateStr);
+            currentDate.setDate(currentDate.getDate() + 1);
+        }
+        
+        dateRange.forEach(date => {
+            const data = deliveryCounts[date] || {};
             responseData[date] = {
                 info_recv: data.info_recv || 0,
                 dispatched: data.dispatched || 0,
@@ -188,7 +125,7 @@ exports.getCalendarData = async (req, res) => {
             totalJobs += data.all || 0;
         });
         
-        console.log(`📊 Calendar summary: ${Object.keys(responseData).length} dates, ${totalJobs} total deliveries`);
+        console.log(`📊 Calendar summary: ${Object.keys(deliveryCounts).length} dates with deliveries, ${totalJobs} total deliveries`);
         
         res.json({
             success: true,
@@ -196,10 +133,11 @@ exports.getCalendarData = async (req, res) => {
             meta: {
                 from,
                 to,
-                role: userRole,
-                groupId: userGroupId || null,
-                dateCount: Object.keys(responseData).length,
-                totalJobs
+                role: userRole || 'unknown',
+                groupId: groupIdUsed || userGroupId || null,
+                dateCount: Object.keys(deliveryCounts).length,
+                totalJobs,
+                dateRange: dateRange.length
             }
         });
         
@@ -216,8 +154,8 @@ exports.getCalendarData = async (req, res) => {
 exports.getDateDetails = async (req, res) => {
     try {
         const { date } = req.params;
-        const userRole = req.user.role;
-        const userGroupId = req.user.group_id;
+        const userRole = req.user?.role;
+        const userGroupId = req.user?.group_id;
         
         if (!date) {
             return res.status(400).json({
@@ -227,12 +165,12 @@ exports.getDateDetails = async (req, res) => {
         
         console.log(`📅 Date details request: ${date}, role: ${userRole}, group: ${userGroupId || 'none'}`);
         
-        // Fetch delivery jobs for the specific date
         let url = `https://app.detrack.com/api/v2/jobs?date=${date}&type=Delivery&limit=500`;
         
-        // Add group filter for customers
+        // 👇 Only add group filter for customers
         if (userRole === 'customer' && userGroupId) {
             url += `&group_id=${userGroupId}`;
+            console.log(`🔒 Filtering by group: ${userGroupId}`);
         }
         
         const response = await axios.get(url, {

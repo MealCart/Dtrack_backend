@@ -5,7 +5,7 @@ const { authenticate } = require('../middleware/auth');
 const { upload } = require('../middleware/upload');
 const jobController = require('../controllers/jobController');
 const collectionController = require('../controllers/collectionController');
-
+const dbJobController = require('../controllers/dbJobController');
 // All routes require authentication
 router.use(authenticate);
 
@@ -55,4 +55,7 @@ router.put('/jobs/:doNumber/cancel', jobController.cancelJob);
 // Update a job (address, recipient, instructions, etc.)
 router.put('/jobs/:doNumber', jobController.updateJob);
 
+
+router.get('/db-jobs-list', dbJobController.getDbJobs);
+router.get('/db-collections-list', dbJobController.getDbCollections);
 module.exports = router;

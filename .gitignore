@@ -28,4 +28,5 @@ Thumbs.db
 
 # Build files
 dist/
-build/
+build/backend.zip 
+*.zip 

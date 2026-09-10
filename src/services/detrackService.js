@@ -15,7 +15,7 @@ class DetrackService {
         address: jobData.address || jobData.address_1 || 'Address required',
         deliver_to_collect_from: jobData.deliver_to || jobData.deliver_to_collect_from || jobData.recipient_name || 'Recipient required',
         date: jobData.date || new Date().toISOString().split('T')[0],
-        phone: jobData.phone || '',
+         phone_number: jobData.phone_number || jobData.phone || '',
         notify_email: jobData.notify_email || '',
         instructions: jobData.instructions || '',
         delivery_type: jobData.delivery_type || 'Home Delivery',
@@ -136,7 +136,7 @@ class DetrackService {
         deliver_to_collect_from: collectFrom,  // 👈 This is the sender name for collections
         collect_from: collectFrom,
         date: jobData.date || jobData.scheduled_date || new Date().toISOString().split('T')[0],
-        phone: jobData.phone || jobData.recipient_phone || '',
+       phone_number: jobData.phone_number || jobData.phone || jobData.recipient_phone || '',
         notify_email: jobData.notify_email || jobData.customer_email || '',
         instructions: jobData.instructions || jobData.special_instructions || '',
         collection_time: jobData.collection_time || jobData.time_window || '07:00-18:00',
