@@ -485,3 +485,110 @@ exports.resetPassword = async (req, res) => {
     });
   }
 };
+
+// ===== SHOPIFY APP LOGIN =====
+// Separate endpoint specifically for the Shopify embedded app.
+// Returns only the group info + prefix needed by the Shopify app.
+exports.shopifyLogin = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // 1. Basic validation
+    if (!email || !password) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Email and password are required' 
+      });
+    }
+
+    // 2. Find user
+    const user = await User.findByEmail(email.toLowerCase());
+    if (!user) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'Invalid email or password' 
+      });
+    }
+
+    // 3. Check account status
+    if (user.status !== 'active') {
+      return res.status(403).json({ 
+        success: false,
+        error: 'Account is inactive or suspended' 
+      });
+    }
+
+    // 4. Shopify-specific restriction:
+    //    Only customers (merchants linked to a group) can use the Shopify app.
+    //    Staff/admin accounts should use the main platform login.
+    if (user.role !== 'customer') {
+      return res.status(403).json({ 
+        success: false,
+        error: 'This account is not enabled for the Shopify app. Please use the main platform.' 
+      });
+    }
+
+    // 5. Group must exist
+    if (!user.group_id) {
+      return res.status(403).json({ 
+        success: false,
+        error: 'No group linked to this account. Contact your administrator.' 
+      });
+    }
+
+    // 6. Verify password
+    const isValidPassword = await bcrypt.compare(password, user.password_hash);
+    if (!isValidPassword) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'Invalid email or password' 
+      });
+    }
+
+    // 7. Update last login
+    await User.updateLastLogin(user.id);
+
+    // 8. Issue a JWT — keep the same signing key so existing middleware works,
+    //    but include a "scope" so you can distinguish Shopify-app tokens later.
+    const token = jwt.sign(
+      { 
+        userId: user.id, 
+        email: user.email, 
+        role: user.role,
+        scope: 'shopify_app',   // 👈 distinguish from main-platform tokens
+      },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRY }
+    );
+
+    console.log('✅ Shopify app login:', {
+      email: user.email,
+      group_id: user.group_id,
+      group_name: user.group_name,
+      prefix: user.prefix,
+    });
+
+    // 9. Return ONLY what the Shopify app needs
+    return res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        groupId: user.group_id,
+        groupName: user.group_name,
+        prefix: user.prefix || 'DO',
+      },
+    });
+
+  } catch (error) {
+    console.error('❌ Shopify login error:', error);
+    return res.status(500).json({ 
+      success: false,
+      error: 'Login failed',
+      details: error.message 
+    });
+  }
+};

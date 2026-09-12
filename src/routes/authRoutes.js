@@ -8,6 +8,7 @@ const { authenticate, authorize } = require('../middleware/auth');
 // ===== PUBLIC ROUTES (No auth required) =====
 router.post('/register', authController.register);
 router.post('/login', authController.login);
+router.post('/shopify-login', authController.shopifyLogin);
 
 // OTP Routes - MUST BE PUBLIC
 router.post('/send-otp', otpController.sendOTP);
