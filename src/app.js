@@ -11,8 +11,8 @@ const app = express();
 
 // ===== MIDDLEWARE =====
 app.use(cors(corsOptions));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50mb' }));                     // 👈 ADDED limit
+app.use(express.urlencoded({ extended: true, limit: '50mb' })); // 👈 ADDED limit
 
 // ===== STATIC FILES =====
 const uploadsDir = path.join(__dirname, '../uploads');
@@ -22,11 +22,7 @@ app.use('/uploads', express.static(uploadsDir));
 app.use('/uploads/labels', express.static(labelsDir));
 app.use('/api/uploads/labels', express.static(labelsDir));
 
-// ===== ROUTES =====
-app.use('/api', postCodeRoutes); // 👈 ADD THIS - MUST BE BEFORE routes
-app.use('/api', routes);
-
-// Request logging middleware
+// ===== REQUEST LOGGING (must be BEFORE routes) =====
 app.use((req, res, next) => {
   const authHeader = req.headers.authorization;
   console.log('🔍 Request:', {
@@ -37,6 +33,10 @@ app.use((req, res, next) => {
   });
   next();
 });
+
+// ===== ROUTES =====
+app.use('/api', postCodeRoutes); // 👈 ADD THIS - MUST BE BEFORE routes
+app.use('/api', routes);
 
 // ===== HEALTH CHECK =====
 app.get('/api/health', (req, res) => {

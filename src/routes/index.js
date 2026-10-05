@@ -16,6 +16,7 @@ const postcodeLookupRoutes = require('./postcodeLookupRoutes'); // 👈 NEW
 const vehicleController = require('../controllers/vehicleController');
 const { authenticate } = require('../middleware/auth');
 const scanReportRoutes = require('./scanReportRoutes');
+const detrackSyncRoutes = require('./detrackSyncRoutes'); // 👈 ADD
 // ============================================
 // PUBLIC ROUTES (No authentication required)
 // ============================================
@@ -42,7 +43,7 @@ router.use('/', contactRoutes);
 router.use('/', timeRoutes);
 router.use('/', calendarRoutes);
 router.use('/', searchRoutes); // 👈 ADD THIS
-
+router.use('/', detrackSyncRoutes); // 👈 ADD (near other authenticated routes)
 // 👇 Postcode Management Routes (Admin only)
 router.use('/admin', postcodeManagementRoutes);
 
