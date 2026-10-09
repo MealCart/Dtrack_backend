@@ -594,6 +594,7 @@ exports.downloadLabels = (req, res) => {
 };
 
 // ===== UPLOAD MANIFEST =====
+// ===== UPLOAD MANIFEST =====
 exports.uploadManifest = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -610,6 +611,45 @@ exports.uploadManifest = async (req, res) => {
     console.log('📦 Selected Group ID from request:', selectedGroupId);
     console.log('📦 Selected Group Name from request:', selectedGroupName);
 
+    // ============================================================
+    // ✅ NEW: Parse frontend-supplied dates (prevents DD/MM vs MM/DD bug)
+    //
+    // The frontend sends `parsedData` as a JSON string in the
+    // multipart form body. Each entry has:
+    //   { doNumber: "Test_jobs_68", date: "2026-10-12" }
+    //
+    // We build a map { doNumber -> "YYYY-MM-DD" } and use it
+    // when creating jobs, so the backend does NOT need to
+    // re-parse the Excel date column.
+    // ============================================================
+    let frontendDateMap = {};
+    if (req.body.parsedData) {
+      try {
+        const parsed = JSON.parse(req.body.parsedData);
+        if (Array.isArray(parsed)) {
+          parsed.forEach(p => {
+            if (p.doNumber && p.date) {
+              frontendDateMap[String(p.doNumber).trim()] = String(p.date).trim();
+            }
+          });
+          console.log(`✅ [UPLOAD] Received ${Object.keys(frontendDateMap).length} frontend-parsed dates`);
+          const sampleKeys = Object.keys(frontendDateMap).slice(0, 3);
+          sampleKeys.forEach(k => {
+            console.log(`   - ${k} => ${frontendDateMap[k]}`);
+          });
+        } else {
+          console.warn('⚠️ [UPLOAD] req.body.parsedData is not an array');
+        }
+      } catch (e) {
+        console.error('❌ [UPLOAD] Failed to parse frontend parsedData:', e.message);
+      }
+    } else {
+      console.log('⚠️ [UPLOAD] No parsedData provided by frontend — will fall back to Excel parsing');
+    }
+
+    // ============================================================
+    // Read the Excel file (kept as fallback for non-date columns)
+    // ============================================================
     const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
@@ -702,7 +742,6 @@ exports.uploadManifest = async (req, res) => {
 
     for (const row of validRows) {
       const doNumber = getValue(row, 'D.O. No.', 'Tracking No.', 'DO No', 'Order No.').toString().trim();
-      const dateStr = getValidDate(getValue(row, 'Date', 'Processing Date'));
       const address = getValue(row, 'Address 1', 'Address');
       const address2 = getValue(row, 'Address 2');
       const city = getValue(row, 'City');
@@ -729,6 +768,21 @@ exports.uploadManifest = async (req, res) => {
         groupId = userGroupId;
         groupName = userGroupName || '';
         console.log(`🔒 Customer forced to use group: ${groupId}`);
+      }
+
+      // ============================================================
+      // ✅ PRIORITY 1: Use frontend-parsed date if available
+      // This is the critical fix that resolves the DD/MM vs MM/DD
+      // ambiguity issue for dates coming from the Excel file.
+      // ============================================================
+      let dateStr;
+      if (frontendDateMap[doNumber]) {
+        dateStr = frontendDateMap[doNumber];
+        console.log(`✅ [FRONTEND-DATE] ${doNumber} -> ${dateStr}`);
+      } else {
+        // PRIORITY 2: Fallback to Excel parsing
+        dateStr = getValidDate(getValue(row, 'Date', 'Processing Date'));
+        console.log(`⚠️ [EXCEL-DATE-FALLBACK] ${doNumber} -> ${dateStr}`);
       }
 
       const job = {
@@ -820,7 +874,9 @@ exports.uploadManifest = async (req, res) => {
             group_name: job.group || '',
             group_id: job.group_id || '',
             pickup_address: '',
-            user_id: userId
+            user_id: userId,
+            state: job.state || '',
+            city: job.city || ''
           });
 
           results.push({
