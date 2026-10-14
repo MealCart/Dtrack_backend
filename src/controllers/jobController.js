@@ -118,12 +118,20 @@ function mapDetrackJobToBooking(job) {
 }
 
 // ===== GENERATE POD PDF =====
+// src/controllers/jobController.js — generatePod
 exports.generatePod = async (req, res) => {
   try {
-    const { doNumber } = req.params;
+    let { doNumber } = req.params;
 
     if (!doNumber) {
       return res.status(400).json({ error: 'DO number is required' });
+    }
+
+    // ✅ FIX: Decode so '#AM7642' (sent as '%23AM7642') arrives correctly
+    try {
+      doNumber = decodeURIComponent(doNumber);
+    } catch (e) {
+      console.warn('⚠️ Could not decode doNumber:', doNumber);
     }
 
     console.log(`📄 Generating POD for DO: ${doNumber}`);
@@ -164,11 +172,15 @@ exports.generatePod = async (req, res) => {
 
     const pdfDoc = await PODService.generatePOD(job, photos);
     const pdfBytes = await pdfDoc.save();
-    
+
     console.log(`📄 PDF size: ${pdfBytes.length} bytes`);
 
+    // ✅ Sanitize the DO for the filename header only
+    //    (keep '#' out of Content-Disposition to avoid header parsing issues)
+    const safeFileName = `POD_${doNumber.replace(/[^A-Za-z0-9._-]/g, '_')}.pdf`;
+
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="POD_${doNumber}.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${safeFileName}"`);
     res.setHeader('Content-Length', pdfBytes.length);
     res.setHeader('Cache-Control', 'no-cache');
     res.send(Buffer.from(pdfBytes));

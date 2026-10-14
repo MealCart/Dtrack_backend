@@ -13,7 +13,7 @@ exports.getUsers = async (req, res) => {
         ...user,
         group_id: user.group_id || null,
         group_name: user.group_name || null,
-        prefix: user.prefix || null  // 👈 ADD prefix
+        prefix: user.prefix || null
       }))
     });
   } catch (error) {
@@ -30,7 +30,7 @@ exports.getCustomers = async (req, res) => {
       success: true,
       customers: customers.map(customer => ({
         ...customer,
-        prefix: customer.prefix || null  // 👈 ADD prefix
+        prefix: customer.prefix || null
       }))
     });
   } catch (error) {
@@ -47,7 +47,7 @@ exports.getStaff = async (req, res) => {
       success: true,
       staff: staff.map(user => ({
         ...user,
-        prefix: user.prefix || null  // 👈 ADD prefix
+        prefix: user.prefix || null
       }))
     });
   } catch (error) {
@@ -91,7 +91,7 @@ exports.createUser = async (req, res) => {
       address,
       groupId: null,
       groupName: null,
-      prefix: prefix || null  // 👈 ADD prefix
+      prefix: prefix || null
     });
 
     console.log(`✅ Admin created new user: ${newUser.email} (${newUser.role}) with prefix: ${newUser.prefix || 'none'}`);
@@ -101,7 +101,7 @@ exports.createUser = async (req, res) => {
       message: `User created successfully with role: ${role}`,
       user: {
         ...newUser,
-        prefix: newUser.prefix || null  // 👈 ADD prefix
+        prefix: newUser.prefix || null
       }
     });
 
@@ -121,7 +121,7 @@ exports.createCustomer = async (req, res) => {
       email, password, firstName, lastName, 
       companyName, phone, address,
       groupId, groupName,
-      prefix  // 👈 ADD prefix
+      prefix
     } = req.body;
 
     console.log('📝 Creating customer with prefix:', prefix);
@@ -145,21 +145,9 @@ exports.createCustomer = async (req, res) => {
       return res.status(409).json({ error: 'Email already exists' });
     }
 
-    // Check if group already has a customer
-    const existingCustomer = await User.findCustomerByGroup(groupId);
-    if (existingCustomer) {
-      return res.status(409).json({ 
-        error: 'This group already has a customer account',
-        code: 'GROUP_ALREADY_HAS_CUSTOMER',
-        existingCustomer: {
-          id: existingCustomer.id,
-          email: existingCustomer.email,
-          name: `${existingCustomer.first_name} ${existingCustomer.last_name}`,
-          company: existingCustomer.company_name,
-          status: existingCustomer.status
-        }
-      });
-    }
+    // ✅ REMOVED: Group-already-has-customer check.
+    // Multiple customer accounts can now be created for the same group,
+    // as long as the email is unique.
 
     const saltRounds = 10;
     const passwordHash = await bcrypt.hash(password, saltRounds);
@@ -176,7 +164,7 @@ exports.createCustomer = async (req, res) => {
       address,
       groupId,
       groupName,
-      prefix: prefix || null  // 👈 ADD prefix
+      prefix: prefix || null
     });
 
     console.log(`✅ Admin created customer: ${newUser.email} for group: ${groupName} with prefix: ${newUser.prefix || 'none'}`);
@@ -193,7 +181,7 @@ exports.createCustomer = async (req, res) => {
         companyName: newUser.company_name,
         groupId: newUser.group_id,
         groupName: newUser.group_name,
-        prefix: newUser.prefix || null  // 👈 ADD prefix
+        prefix: newUser.prefix || null
       }
     });
 
@@ -360,6 +348,9 @@ exports.deleteUser = async (req, res) => {
 };
 
 // ===== ADMIN: CHECK IF GROUP HAS CUSTOMER =====
+// ⚠️ NOTE: This endpoint is deprecated under the new "many customers per group"
+// rule. It now returns ALL customers for the group (was: a single one).
+// You can delete this endpoint if nothing consumes it.
 exports.checkGroupCustomer = async (req, res) => {
   try {
     const { groupId } = req.params;
@@ -368,28 +359,31 @@ exports.checkGroupCustomer = async (req, res) => {
       return res.status(400).json({ error: 'Group ID is required' });
     }
 
-    const customer = await User.findCustomerByGroup(groupId);
+    // ✅ CHANGED: previously returned a single customer; now returns all.
+    const customers = await User.findAllCustomersByGroup(groupId);
 
-    if (customer) {
+    if (customers && customers.length > 0) {
       return res.json({
         success: true,
         hasCustomer: true,
-        customer: {
-          id: customer.id,
-          email: customer.email,
-          first_name: customer.first_name,
-          last_name: customer.last_name,
-          name: `${customer.first_name} ${customer.last_name}`,
-          company: customer.company_name,
-          status: customer.status,
-          prefix: customer.prefix || null  // 👈 ADD prefix
-        }
+        customer: customers[0], // keep first for backwards compat
+        customers: customers.map(c => ({
+          id: c.id,
+          email: c.email,
+          first_name: c.first_name,
+          last_name: c.last_name,
+          name: `${c.first_name} ${c.last_name}`,
+          company: c.company_name,
+          status: c.status,
+          prefix: c.prefix || null
+        }))
       });
     } else {
       return res.status(404).json({
         success: true,
         hasCustomer: false,
-        customer: null
+        customer: null,
+        customers: []
       });
     }
   } catch (error) {
@@ -401,7 +395,8 @@ exports.checkGroupCustomer = async (req, res) => {
   }
 };
 
-// ===== ADMIN: GET CUSTOMER BY GROUP ID =====
+// ===== ADMIN: GET CUSTOMERS BY GROUP ID =====
+// ✅ CHANGED: previously returned a single customer; now returns all.
 exports.getCustomerByGroup = async (req, res) => {
   try {
     const { groupId } = req.params;
@@ -410,29 +405,31 @@ exports.getCustomerByGroup = async (req, res) => {
       return res.status(400).json({ error: 'Group ID is required' });
     }
 
-    const customer = await User.findCustomerByGroup(groupId);
+    const customers = await User.findAllCustomersByGroup(groupId);
 
-    if (customer) {
+    if (customers && customers.length > 0) {
       res.json({
         success: true,
-        customer: {
-          id: customer.id,
-          email: customer.email,
-          first_name: customer.first_name,
-          last_name: customer.last_name,
-          name: `${customer.first_name} ${customer.last_name}`,
-          company: customer.company_name,
-          status: customer.status,
-          prefix: customer.prefix || null,  // 👈 ADD prefix
-          created_at: customer.created_at,
-          last_login: customer.last_login
-        }
+        customer: customers[0], // backwards-compat single
+        customers: customers.map(c => ({
+          id: c.id,
+          email: c.email,
+          first_name: c.first_name,
+          last_name: c.last_name,
+          name: `${c.first_name} ${c.last_name}`,
+          company: c.company_name,
+          status: c.status,
+          prefix: c.prefix || null,
+          created_at: c.created_at,
+          last_login: c.last_login
+        }))
       });
     } else {
       res.status(404).json({
         success: true,
         customer: null,
-        message: 'No customer found for this group'
+        customers: [],
+        message: 'No customers found for this group'
       });
     }
   } catch (error) {
@@ -447,8 +444,6 @@ exports.getCustomerByGroup = async (req, res) => {
 // ===== ADMIN: GET ALL GROUPS WITH CUSTOMER STATUS =====
 exports.getGroupsWithCustomerStatus = async (req, res) => {
   try {
-    // This would need to fetch groups from Detrack and then check each one
-    // This is a placeholder - you'll need to implement this with DetrackService
     res.status(501).json({
       error: 'Not implemented yet',
       message: 'This endpoint will return all groups with their customer status'
@@ -478,7 +473,7 @@ exports.getUserById = async (req, res) => {
         ...user,
         group_id: user.group_id || null,
         group_name: user.group_name || null,
-        prefix: user.prefix || null  // 👈 ADD prefix
+        prefix: user.prefix || null
       }
     });
   } catch (error) {
@@ -603,7 +598,6 @@ exports.bulkDeleteUsers = async (req, res) => {
       return res.status(400).json({ error: 'User IDs array is required' });
     }
 
-    // Check if trying to delete self
     if (userIds.includes(req.user.id.toString())) {
       return res.status(403).json({ error: 'Cannot delete your own account' });
     }
@@ -617,20 +611,17 @@ exports.bulkDeleteUsers = async (req, res) => {
 
       for (const userId of userIds) {
         try {
-          // Check if user exists
           const user = await User.findById(userId);
           if (!user) {
             errors.push({ userId, error: 'User not found' });
             continue;
           }
 
-          // Delete all related records
           await client.query('DELETE FROM contacts WHERE user_id = $1', [userId]);
           await client.query('DELETE FROM jobs WHERE user_id = $1', [userId]);
           await client.query('DELETE FROM collections WHERE user_id = $1', [userId]);
           await client.query('DELETE FROM labels WHERE user_id = $1', [userId]);
           
-          // Delete the user
           const deletedUser = await User.delete(userId);
           if (deletedUser) {
             results.push(deletedUser);

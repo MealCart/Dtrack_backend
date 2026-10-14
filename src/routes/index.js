@@ -17,6 +17,7 @@ const vehicleController = require('../controllers/vehicleController');
 const { authenticate } = require('../middleware/auth');
 const scanReportRoutes = require('./scanReportRoutes');
 const detrackSyncRoutes = require('./detrackSyncRoutes'); // 👈 ADD
+const apiKeyRoutes = require('./apiKeyRoutes');
 // ============================================
 // PUBLIC ROUTES (No authentication required)
 // ============================================
@@ -34,6 +35,7 @@ router.use('/auth', authRoutes);
 
 // Admin routes (authenticated + admin only)
 router.use('/admin', adminRoutes);
+router.use('/admin', apiKeyRoutes);
 router.use('/', scanReportRoutes);
 // Core business routes (authenticated)
 router.use('/', jobRoutes);
