@@ -66,6 +66,8 @@ class Job {
     return existsMap;
   }
 
+  // ===== CREATE JOB =====
+  // ✅ CHANGED: now persists country, address_1, address_2
   static async create(jobData) {
     const {
       do_number, customer_name, customer_company, phone,
@@ -73,7 +75,7 @@ class Job {
       boxes, weight, contents, status, scheduled_date,
       special_instructions, barcodes, detrack_id, source,
       group_name, pickup_address, user_id, group_id,
-      state, city
+      state, city, country, address_1, address_2
     } = jobData;
 
     const query = `
@@ -83,36 +85,43 @@ class Job {
         boxes, weight, contents, status, scheduled_date,
         special_instructions, barcodes, detrack_id, source,
         group_name, pickup_address, user_id, group_id,
-        state, city,
+        state, city, country, address_1, address_2,
         created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+        $21, $22, $23, $24, $25, $26, $27, $28
+      )
       RETURNING id
     `;
     
     const result = await pool.query(query, [
-      do_number, 
-      customer_name, 
-      customer_company, 
+      do_number,
+      customer_name,
+      customer_company,
       phone,
-      delivery_address, 
-      postcode, 
-      recipient_name, 
+      delivery_address,
+      postcode,
+      recipient_name,
       recipient_phone,
-      boxes, 
-      weight, 
-      contents, 
-      status, 
+      boxes,
+      weight,
+      contents,
+      status,
       scheduled_date,
-      special_instructions, 
-      JSON.stringify(barcodes), 
-      detrack_id, 
+      special_instructions,
+      JSON.stringify(barcodes),
+      detrack_id,
       source,
-      group_name, 
-      pickup_address, 
-      user_id, 
+      group_name,
+      pickup_address,
+      user_id,
       group_id,
       state,
       city,
+      country || 'Australia',
+      address_1 || '',
+      address_2 || '',
       new Date().toISOString(),
       new Date().toISOString()
     ]);
@@ -127,6 +136,8 @@ class Job {
     );
   }
 
+  // ===== UPSERT JOB =====
+  // ✅ CHANGED: now persists country, address_1, address_2 (both on INSERT and ON CONFLICT UPDATE)
   static async upsert(jobData) {
     const {
       do_number, customer_name, customer_company, phone,
@@ -134,7 +145,7 @@ class Job {
       boxes, weight, contents, status, scheduled_date,
       special_instructions, barcodes, detrack_id, source,
       group_name, pickup_address, user_id, group_id,
-      state, city
+      state, city, country, address_1, address_2
     } = jobData;
 
     const query = `
@@ -144,9 +155,13 @@ class Job {
         boxes, weight, contents, status, scheduled_date,
         special_instructions, barcodes, detrack_id, source,
         group_name, pickup_address, user_id, group_id,
-        state, city,
+        state, city, country, address_1, address_2,
         created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+        $21, $22, $23, $24, $25, $26, $27, $28
+      )
       ON CONFLICT (do_number) DO UPDATE SET
         customer_name = EXCLUDED.customer_name,
         customer_company = EXCLUDED.customer_company,
@@ -169,33 +184,39 @@ class Job {
         group_id = EXCLUDED.group_id,
         state = EXCLUDED.state,
         city = EXCLUDED.city,
+        country = EXCLUDED.country,
+        address_1 = EXCLUDED.address_1,
+        address_2 = EXCLUDED.address_2,
         updated_at = CURRENT_TIMESTAMP
     `;
     
     const result = await pool.query(query, [
-      do_number, 
-      customer_name, 
-      customer_company, 
+      do_number,
+      customer_name,
+      customer_company,
       phone,
-      delivery_address, 
-      postcode, 
-      recipient_name, 
+      delivery_address,
+      postcode,
+      recipient_name,
       recipient_phone,
-      boxes, 
-      weight, 
-      contents, 
-      status, 
+      boxes,
+      weight,
+      contents,
+      status,
       scheduled_date,
-      special_instructions, 
-      JSON.stringify(barcodes), 
-      detrack_id, 
+      special_instructions,
+      JSON.stringify(barcodes),
+      detrack_id,
       source,
-      group_name, 
-      pickup_address, 
-      user_id, 
+      group_name,
+      pickup_address,
+      user_id,
       group_id,
       state,
       city,
+      country || 'Australia',
+      address_1 || '',
+      address_2 || '',
       new Date().toISOString(),
       new Date().toISOString()
     ]);
@@ -203,7 +224,8 @@ class Job {
     return result.rows[0];
   }
 
-  // ===== 👇 NEW: UPDATE JOB =====
+  // ===== UPDATE JOB =====
+  // (unchanged — already supports country, address_1, address_2)
   static async update(doNumber, jobData) {
     const {
       customer_name, customer_company, phone,

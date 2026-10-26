@@ -27,7 +27,6 @@ function mapDetrackJobToBooking(job) {
 
   if (barcodes.length === 0) {
     for (let i = 0; i < shippingLabels; i++) {
-      // ✅ FIXED: No leading zeros
       barcodes.push(doNumber + '-' + (i + 1));
     }
   }
@@ -118,7 +117,6 @@ function mapDetrackJobToBooking(job) {
 }
 
 // ===== GENERATE POD PDF =====
-// src/controllers/jobController.js — generatePod
 exports.generatePod = async (req, res) => {
   try {
     let { doNumber } = req.params;
@@ -127,14 +125,11 @@ exports.generatePod = async (req, res) => {
       return res.status(400).json({ error: 'DO number is required' });
     }
 
-    // ✅ FIX: Decode so '#AM7642' (sent as '%23AM7642') arrives correctly
     try {
       doNumber = decodeURIComponent(doNumber);
     } catch (e) {
       console.warn('⚠️ Could not decode doNumber:', doNumber);
     }
-
-    console.log(`📄 Generating POD for DO: ${doNumber}`);
 
     const job = await DetrackService.getJobByDoNumber(doNumber);
 
@@ -162,21 +157,9 @@ exports.generatePod = async (req, res) => {
       job.photo_10_file_url
     ].filter(url => url && url !== null && url !== '');
 
-    console.log(`📸 Found ${photos.length} photos`);
-    console.log(`📄 Generating PDF with job data:`, {
-      do_number: job.do_number,
-      status: job.status,
-      recipient: job.deliver_to_collect_from || job.deliver_to,
-      hasPhotos: photos.length > 0
-    });
-
     const pdfDoc = await PODService.generatePOD(job, photos);
     const pdfBytes = await pdfDoc.save();
 
-    console.log(`📄 PDF size: ${pdfBytes.length} bytes`);
-
-    // ✅ Sanitize the DO for the filename header only
-    //    (keep '#' out of Content-Disposition to avoid header parsing issues)
     const safeFileName = `POD_${doNumber.replace(/[^A-Za-z0-9._-]/g, '_')}.pdf`;
 
     res.setHeader('Content-Type', 'application/pdf');
@@ -185,11 +168,8 @@ exports.generatePod = async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.send(Buffer.from(pdfBytes));
 
-    console.log(`✅ POD generated for ${doNumber}`);
-
   } catch (error) {
     console.error('❌ Generate POD error:', error.message);
-    console.error('❌ Stack:', error.stack);
     res.status(500).json({
       error: 'Failed to generate POD',
       details: error.message,
@@ -218,7 +198,6 @@ exports.getJobs = async (req, res) => {
         const result = await pool.query(query);
         jobs = result.rows;
       }
-      console.log(`✅ Admin/Staff fetched ${jobs.length} jobs (all users)`);
     } else {
       if (userGroupId) {
         const query = `
@@ -230,10 +209,8 @@ exports.getJobs = async (req, res) => {
         `;
         const result = await pool.query(query, [userGroupId]);
         jobs = result.rows;
-        console.log(`✅ Customer fetched ${jobs.length} jobs for group: ${userGroupId}`);
       } else {
         jobs = await Job.findAll(userId, date);
-        console.log(`✅ Customer fetched ${jobs.length} jobs for user ${userId}`);
       }
     }
 
@@ -297,18 +274,15 @@ exports.getJob = async (req, res) => {
 exports.getJobByDoNumber = async (req, res) => {
   try {
     let do_number = req.query.do_number;
-    
+
     if (!do_number) {
       return res.status(400).json({ error: 'do_number is required' });
     }
 
     do_number = decodeURIComponent(do_number);
-    
-    console.log(`📡 Fetching job by DO number: ${do_number} from Detrack...`);
-    
+
     const job = await DetrackService.getJobByDoNumber(do_number);
-    console.log(`✅ ${job ? 'Found' : 'No'} job found for DO number: ${do_number}`);
-    
+
     return res.json({
       success: true,
       data: job
@@ -326,12 +300,17 @@ exports.getJobByDoNumber = async (req, res) => {
 exports.createJob = async (req, res) => {
   try {
     const jobData = req.body;
+
     const userId = req.user.id;
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
     const userGroupName = req.user.group_name;
 
-    console.log(`📦 Creating single job in Detrack for user ${userId}...`);
+    // ---------- DEBUG (address fields incoming) ----------
+    console.log('🔎 [createJob] INCOMING address_1 =', JSON.stringify(jobData.address_1));
+    console.log('🔎 [createJob] INCOMING address_2 =', JSON.stringify(jobData.address_2));
+    console.log('🔎 [createJob] INCOMING address   =', JSON.stringify(jobData.address));
+    // -----------------------------------------------------
 
     const requiredFields = ['do_number', 'address', 'deliver_to'];
     for (const field of requiredFields) {
@@ -348,7 +327,6 @@ exports.createJob = async (req, res) => {
     if (userRole === 'customer' && userGroupId) {
       groupId = userGroupId;
       groupName = userGroupName || '';
-      console.log(`🔒 Customer forced to use group: ${groupId}`);
     }
 
     const detrackPayload = {
@@ -410,7 +388,8 @@ exports.createJob = async (req, res) => {
       const totalBoxes = jobData.boxes || jobData.cartons || 1;
       const barcodes = generateBarcodes(jobData.do_number, totalBoxes);
 
-      const job = await Job.create({
+      // ---------- DEBUG (before Job.create) ----------
+      const createPayload = {
         do_number: jobData.do_number,
         customer_name: jobData.deliver_to || jobData.customer_name || '',
         customer_company: jobData.company_name || '',
@@ -431,10 +410,33 @@ exports.createJob = async (req, res) => {
         group_name: groupName || jobData.group || '',
         group_id: groupId || jobData.group_id || '',
         pickup_address: jobData.pickup_address || '',
-        user_id: userId
-      });
+        user_id: userId,
+        state: jobData.state || '',
+        city: jobData.city || '',
+        country: jobData.country || 'Australia',
+        address_1: jobData.address_1 || jobData.address || '',
+        address_2: jobData.address_2 || ''
+      };
 
-      console.log(`✅ Job ${jobData.do_number} created with ID: ${detrackId} for user ${userId}`);
+      console.log('🔎 [createJob] → Job.create address_1 =', JSON.stringify(createPayload.address_1));
+      console.log('🔎 [createJob] → Job.create address_2 =', JSON.stringify(createPayload.address_2));
+
+      // Check for existing job (duplicate do_number protection debug)
+      const existing = await Job.checkDoNumberExists(jobData.do_number);
+      console.log('🔎 [createJob] Existing job already in DB?', existing);
+      // ---------------------------------------------------
+
+      const job = await Job.create(createPayload);
+
+      console.log(`✅ Job ${jobData.do_number} created (DB id=${job.id}, detrack_id=${detrackId})`);
+
+      // ---------- DEBUG (verify DB row) ----------
+      const verify = await pool.query(
+        'SELECT do_number, address_1, address_2 FROM jobs WHERE do_number = $1',
+        [jobData.do_number]
+      );
+      console.log('🔎 [createJob] DB row AFTER insert:', verify.rows[0]);
+      // ---------------------------------------------
 
       return res.json({
         success: true,
@@ -466,15 +468,6 @@ exports.getDetrackCollections = async (req, res) => {
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
 
-    console.log('📡 Fetching Detrack collections with filters:', { 
-      date, 
-      groupId, 
-      page, 
-      limit, 
-      role: userRole,
-      userGroupId: userGroupId
-    });
-
     const queryParams = {
       type: 'Collection'
     };
@@ -482,15 +475,13 @@ exports.getDetrackCollections = async (req, res) => {
     if (date) {
       queryParams.date = date;
     }
-    
+
     if (page) {
       queryParams.page = parseInt(page);
     }
     if (limit) {
       queryParams.limit = parseInt(limit);
     }
-
-    console.log('📤 Fetching from Detrack with params:', queryParams);
 
     const response = await DetrackService.getJobsWithFilters(queryParams);
 
@@ -513,37 +504,36 @@ exports.getDetrackCollections = async (req, res) => {
         let currentPageTemp = 1;
         let hasNextTemp = true;
         let safetyLimit = 0;
-        
+
         while (hasNextTemp && safetyLimit < 20) {
-          const tempParams = { 
-            ...queryParams, 
-            page: currentPageTemp, 
-            limit: 100 
+          const tempParams = {
+            ...queryParams,
+            page: currentPageTemp,
+            limit: 100
           };
-          
+
           const tempResponse = await DetrackService.getJobsWithFilters(tempParams);
-          
+
           if (tempResponse?.data && tempResponse.data.length > 0) {
             const tempCollections = tempResponse.data.map(job => mapDetrackJobToBooking(job));
             tempCollections.forEach(c => c.type = 'collection');
-            const groupCollections = tempCollections.filter(collection => 
+            const groupCollections = tempCollections.filter(collection =>
               collection.groupId === targetGroupId || collection.group_id === targetGroupId
             );
             allGroupCollections = allGroupCollections.concat(groupCollections);
           }
-          
+
           hasNextTemp = tempResponse?.links?.next !== null && tempResponse.data?.length > 0;
           currentPageTemp++;
           safetyLimit++;
         }
-        
+
         totalCount = allGroupCollections.length;
-        console.log(`📊 Total collections for group ${targetGroupId}: ${totalCount}`);
-        
+
         const startIndex = (parseInt(page || 1) - 1) * itemsPerPage;
         const endIndex = Math.min(startIndex + itemsPerPage, allGroupCollections.length);
         filteredCollections = allGroupCollections.slice(startIndex, endIndex);
-        
+
       } catch (error) {
         console.error('Error counting group collections:', error);
         totalCount = filteredCollections.length;
@@ -555,8 +545,6 @@ exports.getDetrackCollections = async (req, res) => {
 
     const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
     const hasNext = currentPage < totalPages;
-
-    console.log(`📊 Total collections: ${totalCount}, Pages: ${totalPages}, Current: ${currentPage}`);
 
     return res.json({
       success: true,
@@ -606,7 +594,6 @@ exports.downloadLabels = (req, res) => {
 };
 
 // ===== UPLOAD MANIFEST =====
-// ===== UPLOAD MANIFEST =====
 exports.uploadManifest = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -617,23 +604,6 @@ exports.uploadManifest = async (req, res) => {
     const selectedGroupId = req.body.groupId || '';
     const selectedGroupName = req.body.groupName || '';
 
-    console.log(`📁 File upload received from user ${userId}`);
-    console.log('📄 File name:', req.file.originalname);
-    console.log('📏 File size:', req.file.size, 'bytes');
-    console.log('📦 Selected Group ID from request:', selectedGroupId);
-    console.log('📦 Selected Group Name from request:', selectedGroupName);
-
-    // ============================================================
-    // ✅ NEW: Parse frontend-supplied dates (prevents DD/MM vs MM/DD bug)
-    //
-    // The frontend sends `parsedData` as a JSON string in the
-    // multipart form body. Each entry has:
-    //   { doNumber: "Test_jobs_68", date: "2026-10-12" }
-    //
-    // We build a map { doNumber -> "YYYY-MM-DD" } and use it
-    // when creating jobs, so the backend does NOT need to
-    // re-parse the Excel date column.
-    // ============================================================
     let frontendDateMap = {};
     if (req.body.parsedData) {
       try {
@@ -644,24 +614,12 @@ exports.uploadManifest = async (req, res) => {
               frontendDateMap[String(p.doNumber).trim()] = String(p.date).trim();
             }
           });
-          console.log(`✅ [UPLOAD] Received ${Object.keys(frontendDateMap).length} frontend-parsed dates`);
-          const sampleKeys = Object.keys(frontendDateMap).slice(0, 3);
-          sampleKeys.forEach(k => {
-            console.log(`   - ${k} => ${frontendDateMap[k]}`);
-          });
-        } else {
-          console.warn('⚠️ [UPLOAD] req.body.parsedData is not an array');
         }
       } catch (e) {
         console.error('❌ [UPLOAD] Failed to parse frontend parsedData:', e.message);
       }
-    } else {
-      console.log('⚠️ [UPLOAD] No parsedData provided by frontend — will fall back to Excel parsing');
     }
 
-    // ============================================================
-    // Read the Excel file (kept as fallback for non-date columns)
-    // ============================================================
     const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
@@ -723,9 +681,6 @@ exports.uploadManifest = async (req, res) => {
       }
     }
 
-    console.log(`✅ Valid rows: ${validRows.length}`);
-    console.log(`❌ Errors: ${errors.length}`);
-
     if (validRows.length === 0) {
       return res.status(400).json({
         error: 'No valid rows found in the Excel file',
@@ -734,12 +689,10 @@ exports.uploadManifest = async (req, res) => {
       });
     }
 
-    console.log('🔍 Checking for duplicate DO numbers in database...');
     const duplicateCheck = await Job.checkDoNumbersExists(doNumbers);
     const duplicateDoNumbers = Object.keys(duplicateCheck).filter(key => duplicateCheck[key] === true);
 
     if (duplicateDoNumbers.length > 0) {
-      console.log(`❌ Found ${duplicateDoNumbers.length} duplicate DO numbers:`, duplicateDoNumbers);
       return res.status(409).json({
         success: false,
         error: 'Duplicate DO numbers found in database',
@@ -747,8 +700,6 @@ exports.uploadManifest = async (req, res) => {
         message: `The following DO numbers already exist in the database: ${duplicateDoNumbers.join(', ')}. Please remove or change them in your Excel file and try again.`
       });
     }
-
-    console.log('✅ No duplicate DO numbers found. Proceeding with job creation...');
 
     const jobs = [];
 
@@ -773,28 +724,18 @@ exports.uploadManifest = async (req, res) => {
       if (!groupId && selectedGroupId) {
         groupId = selectedGroupId;
         groupName = selectedGroupName;
-        console.log(`📌 Using selected group ID from request: ${groupId}`);
       }
 
       if (!groupId && userRole === 'customer' && userGroupId) {
         groupId = userGroupId;
         groupName = userGroupName || '';
-        console.log(`🔒 Customer forced to use group: ${groupId}`);
       }
 
-      // ============================================================
-      // ✅ PRIORITY 1: Use frontend-parsed date if available
-      // This is the critical fix that resolves the DD/MM vs MM/DD
-      // ambiguity issue for dates coming from the Excel file.
-      // ============================================================
       let dateStr;
       if (frontendDateMap[doNumber]) {
         dateStr = frontendDateMap[doNumber];
-        console.log(`✅ [FRONTEND-DATE] ${doNumber} -> ${dateStr}`);
       } else {
-        // PRIORITY 2: Fallback to Excel parsing
         dateStr = getValidDate(getValue(row, 'Date', 'Processing Date'));
-        console.log(`⚠️ [EXCEL-DATE-FALLBACK] ${doNumber} -> ${dateStr}`);
       }
 
       const job = {
@@ -888,7 +829,10 @@ exports.uploadManifest = async (req, res) => {
             pickup_address: '',
             user_id: userId,
             state: job.state || '',
-            city: job.city || ''
+            city: job.city || '',
+            country: job.country || 'Australia',
+            address_1: job.address_1 || '',
+            address_2: job.address_2 || ''
           });
 
           results.push({
@@ -934,15 +878,6 @@ exports.getDetrackJobsWithFilters = async (req, res) => {
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
 
-    console.log('📡 Fetching Detrack jobs with filters:', { 
-      date, 
-      groupId, 
-      page, 
-      limit, 
-      role: userRole,
-      userGroupId: userGroupId
-    });
-
     const queryParams = {
       type: 'Delivery'
     };
@@ -950,15 +885,13 @@ exports.getDetrackJobsWithFilters = async (req, res) => {
     if (date) {
       queryParams.date = date;
     }
-    
+
     if (page) {
       queryParams.page = parseInt(page);
     }
-    
+
     const effectiveLimit = limit ? parseInt(limit) : 100;
     queryParams.limit = effectiveLimit;
-
-    console.log('📤 Fetching from Detrack with params:', queryParams);
 
     const response = await DetrackService.getJobsWithFilters(queryParams);
 
@@ -968,13 +901,9 @@ exports.getDetrackJobsWithFilters = async (req, res) => {
 
     let filteredJobs = mappedJobs;
     if (targetGroupId) {
-      const beforeFilter = mappedJobs.length;
-      filteredJobs = mappedJobs.filter(job => 
+      filteredJobs = mappedJobs.filter(job =>
         job.groupId === targetGroupId || job.group_id === targetGroupId
       );
-      console.log(`🔒 Filtered ${beforeFilter} jobs to ${filteredJobs.length} jobs for group: ${targetGroupId}`);
-    } else {
-      console.log('👑 Showing ALL jobs (admin/staff)');
     }
 
     let totalCount = 0;
@@ -987,36 +916,35 @@ exports.getDetrackJobsWithFilters = async (req, res) => {
         let currentPageTemp = 1;
         let hasNextTemp = true;
         let safetyLimit = 0;
-        
+
         while (hasNextTemp && safetyLimit < 20) {
-          const tempParams = { 
-            ...queryParams, 
-            page: currentPageTemp, 
-            limit: 100 
+          const tempParams = {
+            ...queryParams,
+            page: currentPageTemp,
+            limit: 100
           };
-          
+
           const tempResponse = await DetrackService.getJobsWithFilters(tempParams);
-          
+
           if (tempResponse?.data && tempResponse.data.length > 0) {
             const tempJobs = tempResponse.data.map(job => mapDetrackJobToBooking(job));
-            const groupJobs = tempJobs.filter(job => 
+            const groupJobs = tempJobs.filter(job =>
               job.groupId === targetGroupId || job.group_id === targetGroupId
             );
             allGroupJobs = allGroupJobs.concat(groupJobs);
           }
-          
+
           hasNextTemp = tempResponse?.links?.next !== null && tempResponse.data?.length > 0;
           currentPageTemp++;
           safetyLimit++;
         }
-        
+
         totalCount = allGroupJobs.length;
-        console.log(`📊 Total jobs for group ${targetGroupId}: ${totalCount}`);
-        
+
         const startIndex = (parseInt(page || 1) - 1) * itemsPerPage;
         const endIndex = Math.min(startIndex + itemsPerPage, allGroupJobs.length);
         filteredJobs = allGroupJobs.slice(startIndex, endIndex);
-        
+
       } catch (error) {
         console.error('Error counting group jobs:', error);
         totalCount = filteredJobs.length;
@@ -1027,8 +955,6 @@ exports.getDetrackJobsWithFilters = async (req, res) => {
 
     const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
     const hasNext = currentPage < totalPages;
-
-    console.log(`📊 Total jobs: ${totalCount}, Pages: ${totalPages}, Current: ${currentPage}`);
 
     return res.json({
       success: true,
@@ -1069,8 +995,6 @@ exports.cancelJob = async (req, res) => {
       return res.status(400).json({ error: 'DO number is required' });
     }
 
-    console.log(`🚫 Cancelling job: ${doNumber} by user ${userId}`);
-
     let detrackJob = null;
     try {
       detrackJob = await DetrackService.getJobByDoNumber(doNumber);
@@ -1081,14 +1005,14 @@ exports.cancelJob = async (req, res) => {
     let job = await Job.findByDoNumberAny(doNumber);
 
     if (!job && !detrackJob) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: 'Job not found',
         message: `No job found with DO number: ${doNumber}`
       });
     }
 
     const currentStatus = job?.status || detrackJob?.status || detrackJob?.primary_job_status || '';
-    
+
     if (currentStatus === 'completed' || currentStatus === 'delivered') {
       return res.status(400).json({
         error: 'Cannot cancel completed job',
@@ -1107,7 +1031,6 @@ exports.cancelJob = async (req, res) => {
     if (detrackJob) {
       try {
         detrackResult = await DetrackService.cancelJob(doNumber);
-        console.log(`✅ Job ${doNumber} cancelled in Detrack`);
       } catch (detrackError) {
         console.error('❌ Failed to cancel in Detrack:', detrackError.message);
       }
@@ -1115,7 +1038,6 @@ exports.cancelJob = async (req, res) => {
 
     if (job) {
       await Job.updateStatus(doNumber, 'cancelled');
-      console.log(`✅ Job ${doNumber} status updated to cancelled in database`);
     } else if (detrackJob) {
       const jobData = {
         do_number: doNumber,
@@ -1140,10 +1062,12 @@ exports.cancelJob = async (req, res) => {
         pickup_address: '',
         user_id: userId,
         state: detrackJob.state || '',
-        city: detrackJob.city || ''
+        city: detrackJob.city || '',
+        country: detrackJob.country || 'Australia',
+        address_1: detrackJob.address_1 || '',
+        address_2: detrackJob.address_2 || ''
       };
       await Job.create(jobData);
-      console.log(`✅ Job ${doNumber} created in database with cancelled status`);
     }
 
     res.json({
@@ -1176,9 +1100,6 @@ exports.updateJob = async (req, res) => {
       return res.status(400).json({ error: 'DO number is required' });
     }
 
-    console.log(`✏️ Updating job: ${doNumber} by user ${userId}`);
-    console.log('📦 Received update data:', JSON.stringify(updateData, null, 2));
-
     let detrackJob = null;
     try {
       detrackJob = await DetrackService.getJobByDoNumber(doNumber);
@@ -1187,7 +1108,7 @@ exports.updateJob = async (req, res) => {
     }
 
     if (!detrackJob) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: 'Job not found in Detrack',
         message: `No job found with DO number: ${doNumber}`
       });
@@ -1209,7 +1130,7 @@ exports.updateJob = async (req, res) => {
     }
 
     const payload = {};
-    
+
     if (updateData.address) payload.address = updateData.address;
     if (updateData.address_1) payload.address_1 = updateData.address_1;
     if (updateData.address_2) payload.address_2 = updateData.address_2;
@@ -1229,10 +1150,7 @@ exports.updateJob = async (req, res) => {
     if (updateData.cartons) payload.cartons = parseInt(updateData.cartons);
     if (updateData.boxes) payload.boxes = String(parseInt(updateData.boxes));
 
-    console.log('📤 Detrack update payload:', JSON.stringify(payload, null, 2));
-
     const detrackResult = await DetrackService.updateJob(doNumber, payload);
-    console.log(`✅ Job ${doNumber} updated in Detrack`);
 
     let job = await Job.findByDoNumberAny(doNumber);
     if (job) {
@@ -1259,9 +1177,8 @@ exports.updateJob = async (req, res) => {
         address_1: updateData.address_1 || detrackJob.address_1 || job.address_1 || '',
         address_2: updateData.address_2 || detrackJob.address_2 || job.address_2 || '',
       };
-      
+
       await Job.update(doNumber, dbUpdateData);
-      console.log(`✅ Job ${doNumber} updated in database`);
     }
 
     res.json({
@@ -1289,8 +1206,6 @@ exports.downloadPod = async (req, res) => {
       return res.status(400).json({ error: 'DO number is required' });
     }
 
-    console.log(`📄 Downloading POD for DO: ${doNumber}`);
-
     const job = await DetrackService.getJobByDoNumber(doNumber);
 
     if (!job) {
@@ -1305,7 +1220,7 @@ exports.downloadPod = async (req, res) => {
     }
 
     const jobId = job.id || job._id;
-    
+
     if (!jobId) {
       return res.status(404).json({
         error: 'Job ID not found',
@@ -1313,11 +1228,7 @@ exports.downloadPod = async (req, res) => {
       });
     }
 
-    console.log(`📄 Job ID: ${jobId}`);
-
     const podUrl = `https://app.detrack.com/api/v2/jobs/export/${jobId}.pdf`;
-    
-    console.log(`📄 POD URL: ${podUrl}`);
 
     const response = await axios.get(podUrl, {
       responseType: 'arraybuffer',
@@ -1328,27 +1239,18 @@ exports.downloadPod = async (req, res) => {
       timeout: 30000
     });
 
-    const contentType = response.headers['content-type'] || 'application/pdf';
-    
-    if (!contentType.includes('pdf') && !contentType.includes('application/octet-stream')) {
-      console.log('⚠️ Unexpected content type:', contentType);
-    }
-
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="POD_${doNumber}.pdf"`);
     res.setHeader('Content-Length', response.data.length);
     res.send(response.data);
 
-    console.log(`✅ POD downloaded for ${doNumber}`);
-
   } catch (error) {
     console.error('❌ Download POD error:', error.message);
-    
+
     if (error.response?.status === 404) {
       return res.status(404).json({
         error: 'POD not available',
-        message: 'Could not download POD. The job may not have a POD document yet.',
-        trackingLink: job.tracking_link || null
+        message: 'Could not download POD. The job may not have a POD document yet.'
       });
     }
 
@@ -1365,8 +1267,6 @@ exports.getGroups = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const search = req.query.search || '';
-
-    console.log(`📡 Getting groups: page=${page}, limit=${limit}, search=${search}`);
 
     const result = await DetrackService.getGroups(page, limit, search);
 
@@ -1388,8 +1288,6 @@ exports.searchAllGroups = async (req, res) => {
   try {
     const search = req.query.search || '';
 
-    console.log(`📡 Searching all groups with term: "${search}"`);
-
     const groups = await DetrackService.searchAllGroups(search);
 
     res.json({
@@ -1408,9 +1306,7 @@ exports.searchAllGroups = async (req, res) => {
 // ===== FETCH JOBS FROM DETRACK API =====
 exports.getDetrackJobs = async (req, res) => {
   try {
-    console.log('📡 Fetching jobs from Detrack...');
     const response = await DetrackService.getJobs();
-    console.log('✅ Fetched ' + (response?.data?.length || 0) + ' jobs from Detrack');
     return res.json({
       success: true,
       data: response
@@ -1428,7 +1324,6 @@ exports.getDetrackJobs = async (req, res) => {
 exports.getDetrackJob = async (req, res) => {
   try {
     const jobId = req.params.id;
-    console.log('📡 Fetching job ' + jobId + ' from Detrack...');
     const response = await DetrackService.getJobById(jobId);
     return res.json({
       success: true,
@@ -1447,16 +1342,15 @@ exports.getDetrackJob = async (req, res) => {
 exports.getBoxStatus = async (req, res) => {
   try {
     let do_number = req.params.do_number;
-    
+
     if (do_number) {
       try {
         do_number = decodeURIComponent(do_number);
-        console.log(`📦 Decoded DO number: ${do_number}`);
       } catch (e) {
-        console.log(`⚠️ Could not decode do_number: ${do_number}`);
+        console.warn('⚠️ Could not decode do_number:', do_number);
       }
     }
-    
+
     const userId = req.user.id;
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
@@ -1480,25 +1374,21 @@ exports.getBoxStatus = async (req, res) => {
       }
     }
 
-    // If job not in database, try Detrack
     if (!job) {
-      console.log(`📡 Job ${do_number} not in DB, checking Detrack...`);
-      
       try {
         const detrackJob = await DetrackService.getJobByDoNumber(do_number);
-        
+
         if (!detrackJob) {
-          return res.status(404).json({ 
+          return res.status(404).json({
             error: 'Job not found in Detrack or database',
             do_number: do_number
           });
         }
 
-        // ✅ FIXED: Generate barcodes without leading zeros
-        const shippingLabels = detrackJob.number_of_shipping_labels || 
-                              detrackJob.cartons || 
-                              detrackJob.boxes || 1;
-        
+        const shippingLabels = detrackJob.number_of_shipping_labels ||
+          detrackJob.cartons ||
+          detrackJob.boxes || 1;
+
         let barcodes = [];
         for (let i = 0; i < shippingLabels; i++) {
           barcodes.push(`${do_number}-${i + 1}`);
@@ -1534,7 +1424,6 @@ exports.getBoxStatus = async (req, res) => {
           scans: scans
         };
 
-        // Sync to database with fixed barcodes
         try {
           const jobData = {
             do_number: do_number,
@@ -1559,16 +1448,17 @@ exports.getBoxStatus = async (req, res) => {
             pickup_address: '',
             user_id: userId,
             state: detrackJob.state || '',
-            city: detrackJob.city || ''
+            city: detrackJob.city || '',
+            country: detrackJob.country || 'Australia',
+            address_1: detrackJob.address_1 || '',
+            address_2: detrackJob.address_2 || ''
           };
 
           const existingJob = await Job.findByDoNumberAny(do_number);
           if (!existingJob) {
             await Job.create(jobData);
-            console.log(`✅ Job ${do_number} synced to database`);
           } else {
             await Job.update(do_number, jobData);
-            console.log(`✅ Job ${do_number} updated in database`);
           }
         } catch (dbError) {
           console.warn(`⚠️ Could not save job ${do_number} to database:`, dbError.message);
@@ -1576,7 +1466,7 @@ exports.getBoxStatus = async (req, res) => {
 
       } catch (detrackError) {
         console.error(`❌ Failed to fetch job ${do_number} from Detrack:`, detrackError.message);
-        return res.status(404).json({ 
+        return res.status(404).json({
           error: 'Job not found',
           do_number: do_number,
           details: detrackError.message
@@ -1584,7 +1474,6 @@ exports.getBoxStatus = async (req, res) => {
       }
     }
 
-    // Parse barcodes and scans
     let barcodes = job.barcodes || [];
     let scans = job.scans || [];
 
@@ -1595,7 +1484,6 @@ exports.getBoxStatus = async (req, res) => {
       try { scans = JSON.parse(scans); } catch (e) { scans = []; }
     }
 
-    // Build box status
     var scannedBarcodes = scans.map(function (s) { return s.barcode; });
 
     var boxStatus = barcodes.map(function (barcode) {
@@ -1636,19 +1524,19 @@ exports.scanBox = async (req, res) => {
   try {
     let do_number = req.body.do_number;
     let barcode = req.body.barcode;
-    
+
     if (req.params.do_number) {
       do_number = decodeURIComponent(req.params.do_number);
     }
-    
+
     if (do_number && typeof do_number === 'string') {
       try {
         do_number = decodeURIComponent(do_number);
       } catch (e) {
-        console.log(`⚠️ Could not decode do_number: ${do_number}`);
+        console.warn('⚠️ Could not decode do_number:', do_number);
       }
     }
-    
+
     if (barcode && typeof barcode === 'string') {
       try {
         barcode = decodeURIComponent(barcode);
@@ -1657,16 +1545,14 @@ exports.scanBox = async (req, res) => {
       }
     }
 
-    console.log(`📦 Scanning box: ${barcode} for job: ${do_number}`);
-    
     const location = req.body.location || 'Warehouse';
     const userId = req.user.id;
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
 
     if (!do_number || !barcode) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: do_number and barcode' 
+      return res.status(400).json({
+        error: 'Missing required fields: do_number and barcode'
       });
     }
 
@@ -1689,16 +1575,13 @@ exports.scanBox = async (req, res) => {
       }
     }
 
-    // If job not found, try to fetch from Detrack and sync
     if (!job) {
-      console.log(`📡 Job ${do_number} not in DB, attempting to sync...`);
       try {
         const detrackJob = await DetrackService.getJobByDoNumber(do_number);
         if (detrackJob) {
-          // ✅ FIXED: Generate barcodes without leading zeros
-          const shippingLabels = detrackJob.number_of_shipping_labels || 
-                                detrackJob.cartons || 
-                                detrackJob.boxes || 1;
+          const shippingLabels = detrackJob.number_of_shipping_labels ||
+            detrackJob.cartons ||
+            detrackJob.boxes || 1;
           let barcodes = [];
           for (let i = 0; i < shippingLabels; i++) {
             barcodes.push(`${do_number}-${i + 1}`);
@@ -1727,26 +1610,26 @@ exports.scanBox = async (req, res) => {
             pickup_address: '',
             user_id: userId,
             state: detrackJob.state || '',
-            city: detrackJob.city || ''
+            city: detrackJob.city || '',
+            country: detrackJob.country || 'Australia',
+            address_1: detrackJob.address_1 || '',
+            address_2: detrackJob.address_2 || ''
           };
 
           const existingJob = await Job.findByDoNumberAny(do_number);
           if (!existingJob) {
             await Job.create(jobData);
-            console.log(`✅ Job ${do_number} synced to database`);
           } else {
             await Job.update(do_number, jobData);
-            console.log(`✅ Job ${do_number} updated in database`);
           }
 
-          // Now fetch the job again
           const query = 'SELECT barcodes, scans FROM jobs WHERE do_number = $1';
           const result = await pool.query(query, [do_number]);
           job = result.rows[0];
         }
       } catch (syncError) {
         console.error(`❌ Failed to sync job ${do_number}:`, syncError.message);
-        return res.status(404).json({ 
+        return res.status(404).json({
           error: 'Job not found. Please generate labels first.',
           do_number: do_number
         });
@@ -1754,13 +1637,12 @@ exports.scanBox = async (req, res) => {
     }
 
     if (!job) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         error: 'Job not found. Please generate labels first.',
         do_number: do_number
       });
     }
 
-    // Parse barcodes and scans
     let barcodes = job.barcodes || [];
     let scans = job.scans || [];
 
@@ -1771,16 +1653,14 @@ exports.scanBox = async (req, res) => {
       try { scans = JSON.parse(scans); } catch (e) { scans = []; }
     }
 
-    // Check if barcode is valid for this job
     if (!barcodes.includes(barcode)) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Invalid barcode for this job',
         barcode: barcode,
         expectedBarcodes: barcodes
       });
     }
 
-    // Check if already scanned
     var existingScan = scans.find(function (s) { return s.barcode === barcode; });
     if (existingScan) {
       return res.status(400).json({
@@ -1789,7 +1669,6 @@ exports.scanBox = async (req, res) => {
       });
     }
 
-    // Add the scan
     var newScan = {
       barcode: barcode,
       checkpoint: 'Scanned',
@@ -1801,7 +1680,6 @@ exports.scanBox = async (req, res) => {
 
     scans.push(newScan);
 
-    // Update database
     if (userRole === 'admin' || userRole === 'staff') {
       await pool.query(
         'UPDATE jobs SET scans = $1, updated_at = CURRENT_TIMESTAMP WHERE do_number = $2',
@@ -1813,8 +1691,6 @@ exports.scanBox = async (req, res) => {
 
     var scannedCount = scans.length;
     var totalBoxes = barcodes.length;
-
-    console.log('✅ Box ' + barcode + ' scanned for job ' + do_number + ' by ' + req.user?.email);
 
     res.json({
       success: true,
@@ -1917,8 +1793,6 @@ exports.bulkScan = async (req, res) => {
       await Job.updateScans(userId, do_number, scans);
     }
 
-    console.log('✅ Bulk scanned ' + scanned.length + ' boxes for ' + do_number);
-
     res.json({
       success: true,
       message: scanned.length + ' boxes scanned successfully',
@@ -1947,8 +1821,6 @@ exports.getDashboardStats = async (req, res) => {
     var userId = req.user.id;
     var userRole = req.user.role;
     var userGroupId = req.user.group_id;
-
-    console.log('📊 Fetching dashboard stats for user ' + userId + ' (' + userRole + ')');
 
     var jobQuery = '';
     var jobParams = [];
@@ -2009,8 +1881,6 @@ exports.getDashboardStats = async (req, res) => {
 
     var jobResult = await pool.query(jobQuery, jobParams);
     var jobs = jobResult.rows;
-
-    console.log('📦 Found ' + jobs.length + ' jobs');
 
     if (jobs.length === 0) {
       return res.json({
@@ -2111,8 +1981,6 @@ exports.getDashboardStats = async (req, res) => {
       totalCustomers: Object.keys(customerSet).length
     };
 
-    console.log('📊 Stats:', stats);
-
     res.json({
       success: true,
       data: {
@@ -2140,16 +2008,10 @@ exports.uploadCollectionManifest = async (req, res) => {
     const userGroupId = req.user.group_id;
     const userGroupName = req.user.group_name;
 
-    console.log(`📁 Collection file upload received from user ${userId}`);
-    console.log('📄 File name:', req.file.originalname);
-    console.log('📏 File size:', req.file.size, 'bytes');
-
     const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
     const rawData = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
-
-    console.log('📊 Total rows in Excel:', rawData.length);
 
     let headerRowIndex = -1;
     let dataStartIndex = -1;
@@ -2170,28 +2032,18 @@ exports.uploadCollectionManifest = async (req, res) => {
       return res.status(400).json({ error: 'No header row found in Excel file' });
     }
 
-    console.log('📊 Header row found at index:', headerRowIndex);
-    console.log('📊 Data starts at row:', dataStartIndex);
-
     const headers = rawData[headerRowIndex].map(function (h) { return h?.toString().trim() || ''; });
-    console.log('📊 Headers:', headers);
-
     const dataRows = [];
 
     for (let i = dataStartIndex; i < rawData.length; i++) {
       const row = rawData[i];
-      if (!row || row.every(function (cell) { return !cell || cell === ''; })) {
-        console.log(`⏭️ Skipping empty row ${i}`);
-        continue;
-      }
+      if (!row || row.every(function (cell) { return !cell || cell === ''; })) continue;
       const obj = {};
       headers.forEach(function (header, idx) {
         obj[header.trim()] = row[idx] || '';
       });
       dataRows.push(obj);
     }
-
-    console.log(`📊 Found ${dataRows.length} data rows`);
 
     const validRows = [];
     const errors = [];
@@ -2219,9 +2071,6 @@ exports.uploadCollectionManifest = async (req, res) => {
       }
     }
 
-    console.log(`✅ Valid rows: ${validRows.length}`);
-    console.log(`❌ Errors: ${errors.length}`);
-
     if (validRows.length === 0) {
       return res.status(400).json({
         error: 'No valid rows found in the Excel file',
@@ -2230,12 +2079,10 @@ exports.uploadCollectionManifest = async (req, res) => {
       });
     }
 
-    console.log('🔍 Checking for duplicate DO numbers in collections database...');
     const duplicateCheck = await Collection.checkDoNumbersExists(doNumbers);
     const duplicateDoNumbers = Object.keys(duplicateCheck).filter(key => duplicateCheck[key] === true);
 
     if (duplicateDoNumbers.length > 0) {
-      console.log(`❌ Found ${duplicateDoNumbers.length} duplicate DO numbers:`, duplicateDoNumbers);
       return res.status(409).json({
         success: false,
         error: 'Duplicate DO numbers found in database',
@@ -2243,8 +2090,6 @@ exports.uploadCollectionManifest = async (req, res) => {
         message: `The following DO numbers already exist in the collections database: ${duplicateDoNumbers.join(', ')}. Please remove or change them in your Excel file and try again.`
       });
     }
-
-    console.log('✅ No duplicate DO numbers found. Proceeding with collection creation...');
 
     const collections = [];
 
@@ -2296,15 +2141,12 @@ exports.uploadCollectionManifest = async (req, res) => {
       collections.push(collection);
     }
 
-    console.log(`📦 Processing ${collections.length} collections...`);
-
     const results = [];
     const failedJobs = [];
     const labels = [];
 
     for (let i = 0; i < collections.length; i++) {
       const collection = collections[i];
-      console.log(`📤 Processing collection ${i + 1}/${collections.length}: ${collection.do_number}`);
 
       try {
         const detrackPayload = {
@@ -2329,14 +2171,11 @@ exports.uploadCollectionManifest = async (req, res) => {
           type: 'Collection'
         };
 
-        console.log(`📤 Sending to Detrack: ${collection.do_number}`);
         const response = await DetrackService.createCollectionJob(detrackPayload);
 
         if (response && response.data && response.data.id) {
           const detrackId = response.data.id;
           const barcodes = [collection.do_number];
-
-          console.log(`✅ Collection ${collection.do_number} created in Detrack with ID: ${detrackId}`);
 
           const savedCollection = await Collection.create({
             do_number: collection.do_number,
@@ -2362,8 +2201,6 @@ exports.uploadCollectionManifest = async (req, res) => {
             user_id: userId
           });
 
-          console.log(`✅ Collection ${collection.do_number} saved to database`);
-
           results.push({
             do_number: collection.do_number,
             status: 'success',
@@ -2371,7 +2208,6 @@ exports.uploadCollectionManifest = async (req, res) => {
             barcodes: barcodes
           });
         } else {
-          console.log(`❌ Failed to create ${collection.do_number} in Detrack - No ID returned`);
           failedJobs.push({
             do_number: collection.do_number,
             error: 'Failed to create in Detrack - No ID returned'
@@ -2385,8 +2221,6 @@ exports.uploadCollectionManifest = async (req, res) => {
         });
       }
     }
-
-    console.log(`📊 Summary: ${results.length} created, ${failedJobs.length} failed`);
 
     return res.json({
       success: true,
