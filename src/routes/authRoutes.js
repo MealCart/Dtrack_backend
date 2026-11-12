@@ -19,6 +19,8 @@ router.post('/reset-password', authController.resetPassword);
 // ===== PROTECTED ROUTES (Auth required) =====
 router.use(authenticate);
 
+router.get('/booking-customers', authorize('admin', 'staff'), require('../services/bookingCustomerService').listCustomers);
+
 router.get('/me', authController.getMe);
 router.post('/logout', authController.logout);
 

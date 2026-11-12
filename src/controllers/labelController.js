@@ -90,7 +90,7 @@ exports.generateLabels = async (req, res) => {
     let detrackJob = null;
     
     try {
-      detrackJob = await DetrackService.getJobByDoNumber(doNumber);
+      detrackJob = job && !job.detrack_id ? null : await DetrackService.getJobByDoNumber(doNumber);
       
       if (detrackJob) {
         console.log(`✅ Job found in Detrack: ${detrackJob.id}`);
@@ -340,7 +340,7 @@ exports.generateAndDownloadLabels = async (req, res) => {
     let detrackJob = null;
 
     try {
-      detrackJob = await DetrackService.getJobByDoNumber(doNumber);
+      detrackJob = job && !job.detrack_id ? null : await DetrackService.getJobByDoNumber(doNumber);
       
       if (detrackJob) {
         finalState = detrackJob.state || reqState || '';
@@ -462,7 +462,7 @@ exports.generateAndDownloadLabels = async (req, res) => {
     try {
       const existingJob = await Job.findByDoNumberAny(doNumber);
       
-      if (!existingJob) {
+      if (!existingJob && detrackJob) {
         const newJobData = {
           do_number: doNumber,
           customer_name: finalCustomerName,
@@ -492,7 +492,7 @@ exports.generateAndDownloadLabels = async (req, res) => {
         
         await Job.create(newJobData);
         console.log(`✅ Job ${doNumber} CREATED in database from Detrack sync`);
-      } else {
+      } else if (existingJob) {
         const updateData = {
           customer_name: finalCustomerName,
           customer_company: finalCompanyName,  // ✅ Company name from database

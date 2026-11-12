@@ -195,13 +195,12 @@ exports.logout = (req, res) => {
   res.json({ success: true, message: 'Logged out successfully' });
 };
 
-// ===== ADMIN: CREATE CUSTOMER WITH GROUP =====
+// ===== ADMIN: CREATE CUSTOMER WITHOUT DETRACK GROUP =====
 exports.adminCreateCustomer = async (req, res) => {
   try {
     const { 
       email, password, firstName, lastName, 
       companyName, phone, address,
-      groupId, groupName,
       prefix
     } = req.body;
 
@@ -216,10 +215,6 @@ exports.adminCreateCustomer = async (req, res) => {
       });
     }
 
-    if (!groupId) {
-      return res.status(400).json({ error: 'Group selection is required' });
-    }
-
     if (password.length < 6) {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
@@ -228,10 +223,6 @@ exports.adminCreateCustomer = async (req, res) => {
     if (existingUser) {
       return res.status(409).json({ error: 'Email already exists' });
     }
-
-    // ✅ REMOVED: Group-already-has-customer check.
-    // Multiple customer accounts can now share the same group,
-    // as long as the email is unique.
 
     const saltRounds = 10;
     const passwordHash = await bcrypt.hash(password, saltRounds);
@@ -243,15 +234,15 @@ exports.adminCreateCustomer = async (req, res) => {
       lastName,
       role: 'customer',
       companyName,
-      companyType: 'detrack_customer',
+      companyType: 'customer',
       phone,
       address,
-      groupId,
-      groupName,
+      groupId: null,
+      groupName: null,
       prefix: prefix || null
     });
 
-    console.log(`✅ Admin created customer: ${newUser.email} for group: ${groupName} with prefix: ${newUser.prefix || 'none'}`);
+    console.log(`✅ Admin created customer: ${newUser.email} with prefix: ${newUser.prefix || 'none'}`);
 
     res.status(201).json({
       success: true,

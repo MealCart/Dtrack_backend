@@ -56,6 +56,7 @@ router.put('/jobs/:doNumber/cancel', jobController.cancelJob);
 router.put('/jobs/:doNumber', jobController.updateJob);
 
 
+router.get('/db-booking-detail', dbJobController.getDbBookingDetail);
 router.get('/db-jobs-list', dbJobController.getDbJobs);
 router.get('/db-collections-list', dbJobController.getDbCollections);
 module.exports = router;

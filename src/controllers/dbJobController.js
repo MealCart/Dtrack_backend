@@ -31,12 +31,15 @@ function mapDbJobToBooking(row) {
     reference: doNumber,
     detrackId: row.detrack_id || '',
     type: 'delivery',
+    deliveryType: row.delivery_type || null,
+    delivery_type: row.delivery_type || null,
     source: row.source || 'customer',
 
     // Customer / recipient
     customerName: row.recipient_name || row.customer_name || 'Unknown',
     customerCompany: row.customer_company || '',
-    customerEmail: '',
+    customerEmail: row.recipient_email || '',
+    recipientEmail: row.recipient_email || '',
     recipientName: row.recipient_name || row.customer_name || 'Unknown',
     recipientPhone: row.recipient_phone || row.phone || '',
 
@@ -76,7 +79,7 @@ function mapDbJobToBooking(row) {
     // Label
     labelUrl: row.label_url || '',
 
-    // Live-only — empty here; filled by BookingDetailModal from Detrack
+    // Fields not stored in jobs remain empty; details never query Detrack.
     assignedVehicleId: null,
     driver: '',
     runNumber: '',
@@ -114,11 +117,14 @@ function mapDbCollectionToBooking(row) {
     reference: doNumber,
     detrackId: row.detrack_id || '',
     type: 'collection',
+    collectionType: row.collection_type || null,
+    collection_type: row.collection_type || null,
     source: row.source || 'customer',
 
     customerName: row.recipient_name || 'Unknown',
     customerCompany: row.recipient_company || '',
-    customerEmail: '',
+    customerEmail: row.recipient_email || '',
+    recipientEmail: row.recipient_email || '',
     recipientName: row.recipient_name || 'Unknown',
     recipientPhone: row.recipient_phone || '',
 
@@ -140,7 +146,7 @@ function mapDbCollectionToBooking(row) {
     scans: [],
 
     scheduledDate: row.scheduled_date || '',
-    status: statusMap[(row.status || '').toLowerCase()] || 'pending',
+    status: statusMap[(row.status || '').toLowerCase()] || row.status || 'pending',
     createdAt: row.created_at || new Date().toISOString(),
     updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
 
@@ -194,8 +200,8 @@ exports.getDbJobs = async (req, res) => {
 
     if (userRole === 'customer') {
       if (userGroupId) {
-        params.push(userGroupId);
-        conditions.push(`group_id = $${params.length}`);
+        params.push(userGroupId, userId);
+        conditions.push(`(group_id = $${params.length - 1} OR user_id = $${params.length})`);
       } else {
         params.push(userId);
         conditions.push(`user_id = $${params.length}`);
@@ -274,8 +280,8 @@ exports.getDbCollections = async (req, res) => {
 
     if (userRole === 'customer') {
       if (userGroupId) {
-        params.push(userGroupId);
-        conditions.push(`group_id = $${params.length}`);
+        params.push(userGroupId, userId);
+        conditions.push(`(group_id = $${params.length - 1} OR user_id = $${params.length})`);
       } else {
         params.push(userId);
         conditions.push(`user_id = $${params.length}`);
@@ -328,5 +334,34 @@ exports.getDbCollections = async (req, res) => {
       error: 'Failed to fetch collections from database',
       details: error.message,
     });
+  }
+};
+
+// Details, refresh and polling read one explicitly selected source table only.
+exports.getDbBookingDetail = async (req, res) => {
+  const { type, reference } = req.query;
+  const role = req.user?.role;
+  if (!['admin', 'staff', 'customer'].includes(role)) {
+    return res.status(403).json({ success: false, error: 'Access denied' });
+  }
+  if (!['delivery', 'collection'].includes(type) || typeof reference !== 'string' || !reference.trim()) {
+    return res.status(400).json({ success: false, error: 'Booking type and reference are required' });
+  }
+  const table = type === 'delivery' ? 'jobs' : 'collections';
+  const params = [reference];
+  let where = 'do_number = $1';
+  if (role === 'customer') {
+    params.push(req.user.id);
+    where += ' AND user_id = $2';
+  }
+  try {
+    const result = await pool.query(`SELECT * FROM ${table} WHERE ${where} ORDER BY id DESC LIMIT 1`, params);
+    if (!result.rows.length) return res.status(404).json({ success: false, error: 'Booking not found in database' });
+    const map = type === 'delivery' ? mapDbJobToBooking : mapDbCollectionToBooking;
+    res.set?.('Cache-Control', 'no-store');
+    return res.json({ success: true, source: 'database', data: map(result.rows[0]) });
+  } catch (error) {
+    console.error('Database booking detail failed:', error);
+    return res.status(500).json({ success: false, error: 'Failed to load booking from database' });
   }
 };

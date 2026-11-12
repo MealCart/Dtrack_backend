@@ -66,6 +66,8 @@ class Collection {
   }
 
   static async create(collectionData) {
+    require('../utils/australianPhone').normalizePhoneFields(collectionData);
+    collectionData.collection_type = require('../utils/bookingType')(collectionData.collection_type);
     const {
       do_number, recipient_name, recipient_company, collection_address,
       postcode, city, state, country, recipient_phone, special_instructions,
@@ -79,9 +81,9 @@ class Collection {
         postcode, city, state, country, recipient_phone, special_instructions,
         scheduled_date, time_window, collection_type, group_id, group_name,
         status, detrack_id, tracking_link, verification_code, source, user_id,
-        created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
-      RETURNING id
+        created_at, updated_at, recipient_email
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+      RETURNING id, user_id
     `;
     
     const result = await pool.query(query, [
@@ -91,13 +93,19 @@ class Collection {
       status || 'pending', detrack_id, tracking_link, verification_code, 
       source || 'customer', user_id,
       new Date().toISOString(),
-      new Date().toISOString()
+      new Date().toISOString(),
+      collectionData.recipient_email ?? null
     ]);
     
+    if (result.rows[0]?.id == null) {
+      throw new Error('Database did not return a saved booking.');
+    }
     return result.rows[0];
   }
 
   static async upsert(collectionData) {
+    require('../utils/australianPhone').normalizePhoneFields(collectionData);
+    collectionData.collection_type = require('../utils/bookingType')(collectionData.collection_type);
     const {
       do_number, recipient_name, recipient_company, collection_address,
       postcode, city, state, country, recipient_phone, special_instructions,
@@ -111,9 +119,10 @@ class Collection {
         postcode, city, state, country, recipient_phone, special_instructions,
         scheduled_date, time_window, collection_type, group_id, group_name,
         status, detrack_id, tracking_link, verification_code, source, user_id,
-        created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+        created_at, updated_at, recipient_email
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
       ON CONFLICT (do_number) DO UPDATE SET
+        recipient_email = COALESCE(EXCLUDED.recipient_email, collections.recipient_email),
         recipient_name = EXCLUDED.recipient_name,
         recipient_company = EXCLUDED.recipient_company,
         collection_address = EXCLUDED.collection_address,
@@ -125,14 +134,14 @@ class Collection {
         special_instructions = EXCLUDED.special_instructions,
         scheduled_date = EXCLUDED.scheduled_date,
         time_window = EXCLUDED.time_window,
-        collection_type = EXCLUDED.collection_type,
+        collection_type = COALESCE(EXCLUDED.collection_type, collections.collection_type),
         group_id = EXCLUDED.group_id,
         group_name = EXCLUDED.group_name,
         status = EXCLUDED.status,
         detrack_id = EXCLUDED.detrack_id,
         tracking_link = EXCLUDED.tracking_link,
         verification_code = EXCLUDED.verification_code,
-        user_id = EXCLUDED.user_id,
+        user_id = COALESCE(collections.user_id, EXCLUDED.user_id),
         updated_at = CURRENT_TIMESTAMP
     `;
     
@@ -143,7 +152,8 @@ class Collection {
       status || 'pending', detrack_id, tracking_link, verification_code, 
       source || 'customer', user_id,
       new Date().toISOString(),
-      new Date().toISOString()
+      new Date().toISOString(),
+      collectionData.recipient_email ?? null
     ]);
     
     return result.rows[0];

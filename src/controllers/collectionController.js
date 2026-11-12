@@ -9,86 +9,14 @@ const { getValue, getNumber, getValidDate, generateBarcodes } = require('../util
 exports.createCollection = async (req, res) => {
   try {
     const collectionData = req.body;
-    const userId = req.user.id;
-    const userRole = req.user.role;
-    const userGroupId = req.user.group_id;
-    const userGroupName = req.user.group_name;
-
-    console.log(`📦 Creating collection for user ${userId}...`);
-    console.log('📦 Collection data:', JSON.stringify(collectionData, null, 2));
-
-    // Validate required fields
-    const requiredFields = ['do_number', 'collection_address', 'recipient_name'];
-    for (const field of requiredFields) {
-      if (!collectionData[field]) {
-        return res.status(400).json({
-          error: `Missing required field: ${field}`
-        });
-      }
+    try { require('../utils/australianPhone').normalizePhoneFields(collectionData); } catch (error) { return res.status(400).json({ error: error.message }); }
+    const customer = await require('../services/bookingCustomerService').resolveCustomer(req);
+    for (const field of ['do_number', 'collection_address', 'recipient_name']) {
+      if (!collectionData[field]) return res.status(400).json({ error: `Missing required field: ${field}` });
     }
-
-    // Check if DO number already exists in database
-    const existingCollection = await Collection.checkDoNumberExists(collectionData.do_number);
-    if (existingCollection) {
-      return res.status(409).json({
-        error: `Collection with DO number ${collectionData.do_number} already exists`
-      });
-    }
-
-    // If user is customer, use their group_id automatically
-    let groupId = collectionData.group_id || '';
-    let groupName = collectionData.group_name || '';
+    if (await Collection.checkDoNumberExists(collectionData.do_number)) return res.status(409).json({ error: 'DO number already exists' });
     
-    if (userRole === 'customer' && userGroupId) {
-      groupId = userGroupId;
-      groupName = userGroupName || '';
-      console.log(`🔒 Customer forced to use group: ${groupId}`);
-    }
-
-    // 👇 IMPORTANT: Get the recipient name
-    const recipientName = collectionData.recipient_name || collectionData.collect_from || 'Unknown Recipient';
-    console.log(`👤 Recipient name: ${recipientName}`);
-
-    // Prepare payload for Detrack API
-    const detrackPayload = {
-      do_number: collectionData.do_number,
-      address: collectionData.collection_address || 'Address not provided',
-      deliver_to_collect_from: collectionData.collect_from || collectionData.recipient_name || 'Unknown Sender',  // 👈 Use deliver_to_collect_from
-      date: collectionData.scheduled_date || new Date().toISOString().split('T')[0],
-      phone: collectionData.recipient_phone || '',
-      notify_email: collectionData.notify_email || '',
-      instructions: collectionData.special_instructions || '',
-      group_id: groupId || collectionData.group_id || '',
-      collection_time: collectionData.time_window || '07:00-18:00',
-      type: 'Collection',
-      company_name: collectionData.recipient_company || '',
-      address_1: collectionData.collection_address || '',
-      postal_code: collectionData.postcode || '',
-      city: collectionData.city || '',
-      state: collectionData.state || '',
-      country: collectionData.country || 'Australia',
-      items: collectionData.items || [
-        {
-          sku: 'COL-001',
-          desc: 'Collection Item',
-          qty: 1
-        }
-      ]
-    };
-
-    console.log('📤 Sending to Detrack - collect_from:', detrackPayload.collect_from);
-    console.log('📤 Full payload:', JSON.stringify(detrackPayload, null, 2));
-
-    const response = await DetrackService.createCollectionJob(detrackPayload);
-
-    console.log('✅ Detrack response - deliver_to_collect_from:', response.data?.deliver_to_collect_from);
-
-    if (response && response.data && response.data.id) {
-      const detrackId = response.data.id;
-      const trackingLink = response.data.tracking_link || '';
-      const verificationCode = response.data.verification_code || '';
-
-      const collection = await Collection.create({
+    const createPayload = {
         do_number: collectionData.do_number,
         recipient_name: collectionData.recipient_name,
         recipient_company: collectionData.recipient_company || '',
@@ -97,345 +25,30 @@ exports.createCollection = async (req, res) => {
         city: collectionData.city || '',
         state: collectionData.state || '',
         country: collectionData.country || 'Australia',
+        recipient_email: collectionData.notify_email ?? collectionData.customer_email ?? collectionData.recipient_email ?? null,
         recipient_phone: collectionData.recipient_phone || '',
         special_instructions: collectionData.special_instructions || '',
         scheduled_date: collectionData.scheduled_date || null,
         time_window: collectionData.time_window || '07:00-18:00',
-        collection_type: collectionData.collection_type || 'Home Collection',
-        group_id: groupId || collectionData.group_id || '',
-        group_name: groupName || collectionData.group_name || '',
+        collection_type: require('../utils/bookingType')(collectionData.collection_type, 'Home Collection'),
+        group_id: null,
+        group_name: null,
         status: 'pending',
-        detrack_id: detrackId,
-        tracking_link: trackingLink,
-        verification_code: verificationCode,
+        detrack_id: null,
+        tracking_link: '',
+        verification_code: '',
         source: 'customer',
-        user_id: userId
-      });
-
-      console.log(`✅ Collection ${collectionData.do_number} created with ID: ${detrackId} for user ${userId}`);
-
-      return res.json({
-        success: true,
-        collection: {
-          id: collection.id,
-          do_number: collectionData.do_number,
-          detrack_id: detrackId,
-          tracking_link: trackingLink,
-          verification_code: verificationCode,
-          status: 'pending',
-          recipient_name: recipientName
-        },
-        detrack_response: response.data
-      });
-    } else {
-      throw new Error('Failed to create collection in Detrack: No ID returned');
-    }
-
+        user_id: customer.id
+    };
+    const saved = await Collection.create(createPayload);
+    return res.json({ success: true, collection: { id: saved.id, do_number: collectionData.do_number, customer_id: saved.user_id, status: 'pending', recipient_name: collectionData.recipient_name, collection_type: createPayload.collection_type } });
   } catch (error) {
-    console.error('❌ Error creating collection:', error);
-    console.error('❌ Error details:', error.response?.data || error.message);
-    return res.status(500).json({
-      error: 'Failed to create collection',
-      details: error.response?.data?.message || error.message,
-      fullError: error.response?.data || error.toString()
-    });
+    return res.status(error.status || (error.code === '23505' ? 409 : 500)).json({ error: error.status ? error.message : 'Failed to create booking', details: error.message, code: error.code });
   }
 };
 
 // ===== UPLOAD COLLECTION MANIFEST =====
-exports.uploadCollectionManifest = async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const userRole = req.user.role;
-    const userGroupId = req.user.group_id;
-    const userGroupName = req.user.group_name;
-    
-    // 👇 CRITICAL: Get groupId and groupName from req.body
-    // With multer, text fields are in req.body
-    const selectedGroupId = req.body.groupId || '';
-    const selectedGroupName = req.body.groupName || '';
-    
-    // 👇 DEBUG: Log EVERYTHING from req.body
-    console.log('🔍 ====== REQUEST BODY DEBUG ======');
-    console.log('🔍 All req.body keys:', Object.keys(req.body));
-    console.log('🔍 req.body contents:', JSON.stringify(req.body, null, 2));
-    console.log('🔍 req.body.groupId:', req.body.groupId);
-    console.log('🔍 req.body.groupName:', req.body.groupName);
-    console.log('🔍 ====== END DEBUG ======');
-    
-    console.log(`📁 Collection file upload received from user ${userId}`);
-    console.log('📄 File name:', req.file.originalname);
-    console.log('📏 File size:', req.file.size, 'bytes');
-    console.log('📦 SELECTED GROUP ID FROM REQUEST:', selectedGroupId);
-    console.log('📦 SELECTED GROUP NAME FROM REQUEST:', selectedGroupName);
-    console.log('📦 USER GROUP ID FROM DB:', userGroupId);
-    console.log('📦 USER GROUP NAME FROM DB:', userGroupName);
-
-    const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const rawData = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
-
-    let headerRowIndex = -1;
-    let dataStartIndex = -1;
-
-    for (let i = 0; i < rawData.length; i++) {
-      const row = rawData[i];
-      if (row && row.length > 0) {
-        const rowStr = row.join(' ').toLowerCase();
-        if (rowStr.includes('d.o. no') || rowStr.includes('do no') || rowStr.includes('tracking no')) {
-          headerRowIndex = i;
-          dataStartIndex = i + 1;
-          break;
-        }
-      }
-    }
-
-    if (headerRowIndex === -1) {
-      return res.status(400).json({ error: 'No header row found in Excel file' });
-    }
-
-    const headers = rawData[headerRowIndex].map(function(h) { return h?.toString().trim() || ''; });
-    const dataRows = [];
-
-    for (let i = dataStartIndex; i < rawData.length; i++) {
-      const row = rawData[i];
-      if (!row || row.every(function(cell) { return !cell || cell === ''; })) continue;
-      const obj = {};
-      headers.forEach(function(header, idx) {
-        obj[header.trim()] = row[idx] || '';
-      });
-      dataRows.push(obj);
-    }
-
-    const validRows = [];
-    const errors = [];
-
-    // First pass: Validate rows and collect DO numbers
-    const doNumbers = [];
-
-    for (let i = 0; i < dataRows.length; i++) {
-      const row = dataRows[i];
-      const rowErrors = [];
-      const hasData = Object.values(row).some(function(v) { return v && v !== ''; });
-      if (!hasData) continue;
-
-      const doNumber = getValue(row, 'D.O. No.', 'Tracking No.', 'DO No');
-      const address = getValue(row, 'Address 1', 'Address');
-      const collectFrom = getValue(row, 'Collect From', 'Collect from', 'Sender Name', 'collect_from');
-
-      if (!doNumber) rowErrors.push('Missing D.O. No.');
-      if (!address) rowErrors.push('Missing Address');
-      if (!collectFrom) rowErrors.push('Missing Collect From');
-
-      if (rowErrors.length > 0) {
-        errors.push({ row: i + 1, doNumber: doNumber || 'Unknown', errors: rowErrors });
-      } else {
-        validRows.push(row);
-        doNumbers.push(doNumber.toString().trim());
-      }
-    }
-
-    console.log(`✅ Valid rows: ${validRows.length}`);
-    console.log(`❌ Errors: ${errors.length}`);
-
-    if (validRows.length === 0) {
-      return res.status(400).json({
-        error: 'No valid rows found in the Excel file',
-        errors: errors,
-        sampleData: dataRows.slice(0, 3)
-      });
-    }
-
-    // ===== CHECK FOR DUPLICATE DO NUMBERS IN DATABASE =====
-    console.log('🔍 Checking for duplicate DO numbers in collections database...');
-    const duplicateCheck = await Collection.checkDoNumbersExists(doNumbers);
-    const duplicateDoNumbers = Object.keys(duplicateCheck).filter(key => duplicateCheck[key] === true);
-    
-    if (duplicateDoNumbers.length > 0) {
-      console.log(`❌ Found ${duplicateDoNumbers.length} duplicate DO numbers:`, duplicateDoNumbers);
-      return res.status(409).json({
-        success: false,
-        error: 'Duplicate DO numbers found in database',
-        duplicateDoNumbers: duplicateDoNumbers,
-        message: `The following DO numbers already exist in the collections database: ${duplicateDoNumbers.join(', ')}. Please remove or change them in your Excel file and try again.`
-      });
-    }
-
-    console.log('✅ No duplicate DO numbers found. Proceeding with collection creation...');
-
-    const collections = [];
-
-    for (const row of validRows) {
-      const doNumber = getValue(row, 'D.O. No.', 'Tracking No.', 'DO No', 'Order No.').toString().trim();
-      const dateStr = getValidDate(getValue(row, 'Date', 'Processing Date'));
-      const address = getValue(row, 'Address 1', 'Address');
-      const address2 = getValue(row, 'Address 2');
-      const city = getValue(row, 'City');
-      const state = getValue(row, 'State');
-      const postalCode = getValue(row, 'Postal Code');
-      const country = getValue(row, 'Country');
-      const collectFrom = getValue(row, 'Collect From', 'Collect from', 'Sender Name', 'collect_from');
-
-      const fullAddress = [address, address2, city, state, postalCode, country].filter(Boolean).join(', ');
-      
-      // 👇 Determine group_id: from Excel, or from request body, or from user's group
-      let groupId = getValue(row, 'Group ID', 'Group Id', 'GroupID', 'group_id');
-      let groupName = getValue(row, 'Group Name', 'Group', 'group_name', 'group');
-      
-      // 👇 CRITICAL: If no group in Excel, use the selected group from request
-      if (!groupId && selectedGroupId) {
-        groupId = selectedGroupId;
-        groupName = selectedGroupName;
-        console.log(`📌 Using selected group ID from request: ${groupId}`);
-      }
-      
-      // 👇 If still no group, use user's group (for customers)
-      if (!groupId && userRole === 'customer' && userGroupId) {
-        groupId = userGroupId;
-        groupName = userGroupName || '';
-        console.log(`🔒 Customer forced to use group: ${groupId}`);
-      }
-      
-      console.log(`✅ FINAL groupId for ${doNumber}: ${groupId}`);
-      console.log(`✅ FINAL groupName for ${doNumber}: ${groupName}`);
-
-      const collection = {
-        date: dateStr,
-        do_number: doNumber || 'COL-' + Date.now(),
-        address: fullAddress || address || 'Address not provided',
-        collect_from: collectFrom || 'Unknown Sender',
-        phone: getValue(row, 'Phone No.', 'Phone'),
-        notify_email: getValue(row, 'Notify Email', 'Notify email'),
-        instructions: getValue(row, 'Instructions'),
-        group_id: groupId || '',
-        group_name: groupName || '',
-        collection_type: getValue(row, 'Collection Type', 'Job type', 'Home Collection'),
-        collection_time: getValue(row, 'Time Window', '07:00-18:00'),
-        address_1: address,
-        address_2: address2,
-        postal_code: postalCode,
-        city: city,
-        state: state,
-        country: country,
-        company_name: getValue(row, 'Company Name'),
-        recipient_phone: getValue(row, 'Phone No.', 'Phone'),
-        recipient_company: getValue(row, 'Company Name'),
-        type: 'Collection'
-      };
-
-      collections.push(collection);
-    }
-
-    console.log(`📦 Processing ${collections.length} collections...`);
-
-    const results = [];
-    const failedJobs = [];
-    const labels = [];
-
-    for (const collection of collections) {
-      try {
-        console.log(`📤 Processing collection: ${collection.do_number}`);
-        console.log(`📤 With group_id: ${collection.group_id}`);
-        console.log(`📤 With group_name: ${collection.group_name}`);
-        
-        const detrackPayload = {
-          do_number: collection.do_number,
-          address: collection.address,
-          collect_from: collection.collect_from,
-          date: collection.date,
-          phone: collection.phone,
-          notify_email: collection.notify_email,
-          instructions: collection.instructions,
-          group_id: collection.group_id,
-          group: collection.group_name,
-          collection_type: collection.collection_type,
-          collection_time: collection.collection_time,
-          address_1: collection.address_1,
-          address_2: collection.address_2,
-          postal_code: collection.postal_code,
-          city: collection.city,
-          state: collection.state,
-          country: collection.country,
-          company_name: collection.company_name,
-          type: 'Collection'
-        };
-
-        console.log('📤 Sending to Detrack with group_id:', detrackPayload.group_id);
-        console.log('📤 Sending to Detrack with group:', detrackPayload.group);
-
-        const response = await DetrackService.createCollectionJob(detrackPayload);
-
-        if (response && response.data && response.data.id) {
-          const detrackId = response.data.id;
-          const barcodes = [collection.do_number];
-
-          await Collection.create({
-            do_number: collection.do_number,
-            recipient_name: collection.collect_from || '',
-            recipient_company: collection.company_name || '',
-            collection_address: collection.address || '',
-            postcode: collection.postal_code || '',
-            city: collection.city || '',
-            state: collection.state || '',
-            country: collection.country || 'Australia',
-            recipient_phone: collection.phone || '',
-            special_instructions: collection.instructions || '',
-            scheduled_date: collection.date || null,
-            time_window: collection.collection_time || '07:00-18:00',
-            collection_type: collection.collection_type || 'Home Collection',
-            group_id: collection.group_id || '',
-            group_name: collection.group_name || '',
-            status: 'pending',
-            detrack_id: detrackId,
-            tracking_link: response.data.tracking_link || '',
-            verification_code: response.data.verification_code || '',
-            source: 'customer',
-            user_id: userId
-          });
-
-          results.push({
-            do_number: collection.do_number,
-            status: 'success',
-            detrack_id: detrackId,
-            barcodes: barcodes
-          });
-        } else {
-          failedJobs.push({
-            do_number: collection.do_number,
-            error: 'Failed to create in Detrack - No ID returned'
-          });
-        }
-      } catch (error) {
-        console.error(`❌ Failed to create collection ${collection.do_number}:`, error.message);
-        failedJobs.push({
-          do_number: collection.do_number,
-          error: error.response?.data?.message || error.message
-        });
-      }
-    }
-
-    console.log(`📊 Summary: ${results.length} created, ${failedJobs.length} failed`);
-
-    return res.json({
-      success: true,
-      total: collections.length,
-      created: results.length,
-      failed: failedJobs.length,
-      results: results,
-      failedJobs: failedJobs,
-      validationErrors: errors,
-      labels: labels
-    });
-
-  } catch (error) {
-    console.error('❌ Upload collection error:', error);
-    return res.status(500).json({
-      error: 'Failed to process collection upload',
-      details: error.message
-    });
-  }
-};
+exports.uploadCollectionManifest = require('../services/bulkBookingService').upload(true);
 
 // ===== FETCH COLLECTIONS FROM DATABASE =====
 exports.getCollections = async (req, res) => {
@@ -463,7 +76,8 @@ exports.getCollections = async (req, res) => {
     } else {
       // Customer - only their group's collections
       if (userGroupId) {
-        collections = await Collection.getCollectionsByGroup(userGroupId);
+        const result = await pool.query('SELECT * FROM collections WHERE (group_id = $1 OR user_id = $2) AND ($3::date IS NULL OR scheduled_date = $3) ORDER BY scheduled_date DESC, created_at DESC', [userGroupId, userId, date || null]);
+        collections = result.rows;
         console.log(`✅ Customer fetched ${collections.length} collections for group: ${userGroupId}`);
       } else {
         collections = await Collection.findAll(userId, date);
@@ -792,7 +406,7 @@ exports.getTodayCollections = async (req, res) => {
 exports.bulkCreateCollections = async (req, res) => {
   try {
     const collectionsData = req.body.collections || [];
-    const userId = req.user.id;
+    const { resolveCustomer } = require("../services/bookingCustomerService");
     const userRole = req.user.role;
     const userGroupId = req.user.group_id;
     const userGroupName = req.user.group_name;
@@ -825,6 +439,8 @@ exports.bulkCreateCollections = async (req, res) => {
           continue;
         }
         
+        const customer = await resolveCustomer(req, collectionData.customer_id ?? req.body.customer_id);
+
         // Use group from data or user's group
         let groupId = collectionData.group_id || '';
         let groupName = collectionData.group_name || '';
@@ -870,7 +486,7 @@ exports.bulkCreateCollections = async (req, res) => {
             special_instructions: collectionData.special_instructions || '',
             scheduled_date: collectionData.scheduled_date || null,
             time_window: collectionData.time_window || '07:00-18:00',
-            collection_type: collectionData.collection_type || 'Home Collection',
+            collection_type: require('../utils/bookingType')(collectionData.collection_type, 'Home Collection'),
             group_id: groupId || collectionData.group_id || '',
             group_name: groupName || collectionData.group_name || '',
             status: 'pending',
@@ -878,7 +494,7 @@ exports.bulkCreateCollections = async (req, res) => {
             tracking_link: response.data.tracking_link || '',
             verification_code: response.data.verification_code || '',
             source: 'customer',
-            user_id: userId
+            user_id: customer.id
           });
           
           results.push({

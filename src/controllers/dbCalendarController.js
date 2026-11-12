@@ -1,6 +1,12 @@
 // src/controllers/dbCalendarController.js
 const { pool } = require('../config/database');
 
+function validDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(value + 'T00:00:00Z');
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
 // ===== GET CALENDAR DATA FROM LOCAL DB =====
 // Returns per-day counts of jobs and collections for a date range.
 exports.getDbCalendar = async (req, res) => {
@@ -8,12 +14,14 @@ exports.getDbCalendar = async (req, res) => {
     const { from, to } = req.query;
     const userId = req.user.id;
     const userRole = req.user.role;
-    const userGroupId = req.user.group_id;
+    if (!['admin', 'staff', 'customer'].includes(userRole)) {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
 
-    if (!from || !to) {
+    if (!validDate(from) || !validDate(to) || from > to) {
       return res.status(400).json({
         success: false,
-        error: 'Missing required params: from and to (YYYY-MM-DD)',
+        error: 'Provide a valid date range: from and to (YYYY-MM-DD)',
       });
     }
 
@@ -22,13 +30,8 @@ exports.getDbCalendar = async (req, res) => {
     const params = [];
 
     if (userRole === 'customer') {
-      if (userGroupId) {
-        params.push(userGroupId);
-        conditions.push(`group_id = $${params.length}`);
-      } else {
-        params.push(userId);
-        conditions.push(`user_id = $${params.length}`);
-      }
+      params.push(userId);
+      conditions.push('user_id = $1');
     }
 
     // Date range (append after role params)
@@ -42,16 +45,16 @@ exports.getDbCalendar = async (req, res) => {
     // ===== JOBS AGGREGATION =====
     const jobsQuery = `
       SELECT
-        scheduled_date::date AS date,
+        to_char(scheduled_date::date, 'YYYY-MM-DD') AS date,
         COUNT(*)::int AS total,
         COALESCE(SUM(boxes), 0)::int AS total_boxes,
-        COUNT(CASE WHEN status = 'pending' THEN 1 END)::int AS pending,
-        COUNT(CASE WHEN status = 'dispatched' THEN 1 END)::int AS dispatched,
-        COUNT(CASE WHEN status = 'in_transit' THEN 1 END)::int AS in_transit,
-        COUNT(CASE WHEN status = 'completed' THEN 1 END)::int AS completed,
-        COUNT(CASE WHEN status = 'delivered' THEN 1 END)::int AS delivered,
-        COUNT(CASE WHEN status = 'failed' THEN 1 END)::int AS failed,
-        COUNT(CASE WHEN status = 'cancelled' THEN 1 END)::int AS cancelled
+        COUNT(CASE WHEN LOWER(TRIM(status)) = 'pending' THEN 1 END)::int AS pending,
+        COUNT(CASE WHEN LOWER(TRIM(status)) = 'dispatched' THEN 1 END)::int AS dispatched,
+        COUNT(CASE WHEN LOWER(TRIM(status)) = 'in_transit' THEN 1 END)::int AS in_transit,
+        COUNT(CASE WHEN LOWER(TRIM(status)) = 'completed' THEN 1 END)::int AS completed,
+        COUNT(CASE WHEN LOWER(TRIM(status)) = 'delivered' THEN 1 END)::int AS delivered,
+        COUNT(CASE WHEN LOWER(TRIM(status)) = 'failed' THEN 1 END)::int AS failed,
+        COUNT(CASE WHEN LOWER(TRIM(status)) = 'cancelled' THEN 1 END)::int AS cancelled
       FROM jobs
       WHERE scheduled_date >= $${fromIdx}
         AND scheduled_date <= $${toIdx}
@@ -63,12 +66,12 @@ exports.getDbCalendar = async (req, res) => {
     // ===== COLLECTIONS AGGREGATION =====
     const collectionsQuery = `
       SELECT
-        scheduled_date::date AS date,
+        to_char(scheduled_date::date, 'YYYY-MM-DD') AS date,
         COUNT(*)::int AS total,
-        COUNT(CASE WHEN status = 'pending' THEN 1 END)::int AS pending,
-        COUNT(CASE WHEN status = 'in_progress' THEN 1 END)::int AS in_progress,
-        COUNT(CASE WHEN status = 'completed' THEN 1 END)::int AS completed,
-        COUNT(CASE WHEN status = 'cancelled' THEN 1 END)::int AS cancelled
+        COUNT(CASE WHEN LOWER(TRIM(status)) = 'pending' THEN 1 END)::int AS pending,
+        COUNT(CASE WHEN LOWER(TRIM(status)) IN ('in_progress', 'in_transit') THEN 1 END)::int AS in_progress,
+        COUNT(CASE WHEN LOWER(TRIM(status)) = 'completed' THEN 1 END)::int AS completed,
+        COUNT(CASE WHEN LOWER(TRIM(status)) = 'cancelled' THEN 1 END)::int AS cancelled
       FROM collections
       WHERE scheduled_date >= $${fromIdx}
         AND scheduled_date <= $${toIdx}
@@ -185,7 +188,7 @@ exports.getDbCalendar = async (req, res) => {
         from,
         to,
         role: userRole,
-        groupId: userRole === 'customer' ? userGroupId : null,
+        groupId: null,
         dateCount: Object.keys(calendarMap).length,
         totalJobs,
         totalCollections,
@@ -199,5 +202,26 @@ exports.getDbCalendar = async (req, res) => {
       error: 'Failed to fetch calendar data from database',
       details: error.message,
     });
+  }
+};
+
+// Compatibility date-details endpoint: both sources are local database tables.
+exports.getDbDateDetails = async (req, res) => {
+  const date = req.params.date;
+  const role = req.user?.role;
+  if (!['admin', 'staff', 'customer'].includes(role)) return res.status(403).json({success:false,error:'Access denied'});
+  if (!validDate(date)) return res.status(400).json({success:false,error:'A valid date is required (YYYY-MM-DD)'});
+  const params = [date];
+  let scope = '';
+  if (role === 'customer') { params.push(req.user.id); scope = ' AND user_id = $2'; }
+  try {
+    const [jobs, collections] = await Promise.all([
+      pool.query(`SELECT * FROM jobs WHERE scheduled_date = $1${scope} ORDER BY id`, params),
+      pool.query(`SELECT * FROM collections WHERE scheduled_date = $1${scope} ORDER BY id`, params),
+    ]);
+    return res.json({success:true,source:'database',data:{date,total:jobs.rows.length+collections.rows.length,jobs:jobs.rows,collections:collections.rows},meta:{role,groupId:null}});
+  } catch (error) {
+    console.error('Database calendar date details failed:', error);
+    return res.status(500).json({success:false,error:'Failed to fetch calendar date details from database'});
   }
 };

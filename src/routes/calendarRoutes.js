@@ -3,12 +3,12 @@ const express = require('express');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const calendarController = require('../controllers/calendarController');
-const dbCalendarController = require('../controllers/dbCalendarController'); // 👈 NEW
+const dbCalendarController = require('../controllers/dbCalendarController');
 
 // All routes require authentication
 router.use(authenticate);
 
-// ===== LEGACY: Detrack-backed calendar (kept for reference) =====
+// Compatibility URLs also read the database only.
 router.get('/calendar', calendarController.getCalendarData);
 router.get('/calendar/date/:date', calendarController.getDateDetails);
 

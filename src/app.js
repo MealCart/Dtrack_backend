@@ -12,7 +12,8 @@ const app = express();
 // ===== MIDDLEWARE =====
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));                     // 👈 ADDED limit
-app.use(express.urlencoded({ extended: true, limit: '50mb' })); // 👈 ADDED limit
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(require('./middleware/australianPhone')); // 👈 ADDED limit
 
 // ===== STATIC FILES =====
 const uploadsDir = path.join(__dirname, '../uploads');

@@ -19,6 +19,7 @@ class Contact {
   }
 
   static async create(contactData) {
+    require('../utils/australianPhone').normalizePhoneFields(contactData);
     const {
       deliver_to, company_name, address_1, address_2, postal_code,
       city, state, country, phone_no, notify_email, instructions,
@@ -46,6 +47,7 @@ class Contact {
   }
 
   static async update(id, userId, contactData) {
+    require('../utils/australianPhone').normalizePhoneFields(contactData);
     const {
       deliver_to, company_name, address_1, address_2, postal_code,
       city, state, country, phone_no, notify_email, instructions,

@@ -69,6 +69,7 @@ class Job {
   // ===== CREATE JOB =====
   // ✅ CHANGED: now persists country, address_1, address_2
   static async create(jobData) {
+    require('../utils/australianPhone').normalizePhoneFields(jobData);
     const {
       do_number, customer_name, customer_company, phone,
       delivery_address, postcode, recipient_name, recipient_phone,
@@ -86,13 +87,13 @@ class Job {
         special_instructions, barcodes, detrack_id, source,
         group_name, pickup_address, user_id, group_id,
         state, city, country, address_1, address_2,
-        created_at, updated_at
+        created_at, updated_at, recipient_email, delivery_type
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22, $23, $24, $25, $26, $27, $28
+        $21, $22, $23, $24, $25, $26, $27, $28, $29, $30
       )
-      RETURNING id
+      RETURNING id, user_id
     `;
     
     const result = await pool.query(query, [
@@ -123,9 +124,14 @@ class Job {
       address_1 || '',
       address_2 || '',
       new Date().toISOString(),
-      new Date().toISOString()
+      new Date().toISOString(),
+      jobData.recipient_email ?? null,
+      require('../utils/bookingType')(jobData.delivery_type)
     ]);
     
+    if (result.rows[0]?.id == null) {
+      throw new Error('Database did not return a saved booking.');
+    }
     return result.rows[0];
   }
 
@@ -139,6 +145,7 @@ class Job {
   // ===== UPSERT JOB =====
   // ✅ CHANGED: now persists country, address_1, address_2 (both on INSERT and ON CONFLICT UPDATE)
   static async upsert(jobData) {
+    require('../utils/australianPhone').normalizePhoneFields(jobData);
     const {
       do_number, customer_name, customer_company, phone,
       delivery_address, postcode, recipient_name, recipient_phone,
@@ -156,13 +163,15 @@ class Job {
         special_instructions, barcodes, detrack_id, source,
         group_name, pickup_address, user_id, group_id,
         state, city, country, address_1, address_2,
-        created_at, updated_at
+        created_at, updated_at, recipient_email, delivery_type
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22, $23, $24, $25, $26, $27, $28
+        $21, $22, $23, $24, $25, $26, $27, $28, $29, $30
       )
       ON CONFLICT (do_number) DO UPDATE SET
+        delivery_type = COALESCE(EXCLUDED.delivery_type, jobs.delivery_type),
+        recipient_email = COALESCE(EXCLUDED.recipient_email, jobs.recipient_email),
         customer_name = EXCLUDED.customer_name,
         customer_company = EXCLUDED.customer_company,
         phone = EXCLUDED.phone,
@@ -180,7 +189,7 @@ class Job {
         detrack_id = EXCLUDED.detrack_id,
         group_name = EXCLUDED.group_name,
         pickup_address = EXCLUDED.pickup_address,
-        user_id = EXCLUDED.user_id,
+        user_id = COALESCE(jobs.user_id, EXCLUDED.user_id),
         group_id = EXCLUDED.group_id,
         state = EXCLUDED.state,
         city = EXCLUDED.city,
@@ -218,7 +227,9 @@ class Job {
       address_1 || '',
       address_2 || '',
       new Date().toISOString(),
-      new Date().toISOString()
+      new Date().toISOString(),
+      jobData.recipient_email ?? null,
+      require('../utils/bookingType')(jobData.delivery_type)
     ]);
     
     return result.rows[0];
@@ -227,6 +238,7 @@ class Job {
   // ===== UPDATE JOB =====
   // (unchanged — already supports country, address_1, address_2)
   static async update(doNumber, jobData) {
+    require('../utils/australianPhone').normalizePhoneFields(jobData);
     const {
       customer_name, customer_company, phone,
       delivery_address, postcode, recipient_name, recipient_phone,
@@ -262,6 +274,7 @@ class Job {
         country = $22,
         address_1 = $23,
         address_2 = $24,
+        delivery_type = COALESCE($26, delivery_type),
         updated_at = CURRENT_TIMESTAMP
       WHERE do_number = $25
       RETURNING id, do_number
@@ -292,7 +305,8 @@ class Job {
       country || 'Australia',
       address_1 || '',
       address_2 || '',
-      doNumber
+      doNumber,
+      require('../utils/bookingType')(jobData.delivery_type)
     ]);
     
     return result.rows[0];

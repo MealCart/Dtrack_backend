@@ -23,6 +23,7 @@ class User {
   }
 
   static async create(userData) {
+    require('../utils/australianPhone').normalizePhoneFields(userData);
     const { 
       email, passwordHash, firstName, lastName, role, 
       companyName, companyType, phone, address,
@@ -38,7 +39,7 @@ class User {
       RETURNING id, email, first_name, last_name, role, company_name, group_id, group_name, prefix, created_at`,  // 👈 ADD prefix
       [email, passwordHash, firstName, lastName, role, 
        companyName, companyType, phone, address, 'active', false,
-       groupId, groupName, new Date().toISOString(), prefix]  // 👈 ADD prefix
+       groupId ?? null, groupName ?? null, groupId ? new Date().toISOString() : null, prefix]  // 👈 ADD prefix
     );
     return result.rows[0];
   }
