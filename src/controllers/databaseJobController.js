@@ -119,7 +119,7 @@ exports.getJobByBarcode=handler(async(req,res)=>{
  CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(j.barcodes)='array' THEN j.barcodes ELSE '[]'::jsonb END) AS b(code)
  WHERE (b.code=$1 OR regexp_replace(b.code,'^#','')=regexp_replace($1,'^#',''))${where}
  ORDER BY (b.code=$1) DESC,j.id DESC LIMIT 2`,params)).rows;
- if(!rows.length)throw httpError(404,'No database job has this shipping barcode. Check the label and confirm the booking was saved.');
+ if(!rows.length)throw Object.assign(httpError(404,'No database job has this shipping barcode. Check the label and confirm the booking was saved.'),{code:'BARCODE_NOT_FOUND'});
  if(rows.length>1)throw httpError(409,'This barcode matches multiple stored labels. Ask an administrator to review it.');
  return res.json({success:true,source:'database',data:legacy(rows[0]),matched_barcode:rows[0].matched_barcode});
 });

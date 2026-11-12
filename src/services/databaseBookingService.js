@@ -28,5 +28,5 @@ function legacy(row, type = 'delivery') {
     number_of_shipping_labels: row.boxes || 1, barcodes: array(row.barcodes), scans: array(row.scans),
     _source: 'database', _in_database: true, _db_data: row };
 }
-function handler(fn) { return async (req, res) => { try { return await fn(req, res); } catch (error) { console.error('Database booking request failed:', error.message); return res.status(error.status || 500).json({success:false,error:error.status ? error.message : 'Database operation failed'}); } }; }
+function handler(fn) { return async (req, res) => { try { return await fn(req, res); } catch (error) { console.error('Database booking request failed:', error.message); return res.status(error.status || 500).json({success:false,error:error.status ? error.message : 'Database operation failed',...(error.code==='BARCODE_NOT_FOUND'?{source:'database',code:'BARCODE_NOT_FOUND'}:{})}); } }; }
 module.exports = { pool, scope, find, array, legacy, handler, httpError };

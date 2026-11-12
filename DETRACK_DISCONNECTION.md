@@ -41,3 +41,11 @@ Validation commands: `npm ci`, then `npm test`. The lockfile includes the existi
 ## Existing Zebra app compatibility
 
 The existing installed staff app can continue using `/job-by-donumber` and `/scan-box` without any mobile rebuild. Lookup first checks the exact owned DO number, then stored printed barcode prefixes. Optional leading # characters and trailing scanner whitespace are matched safely. Ambiguous matches fail with HTTP 409, and no external lookup or import occurs. Scans are recorded using the original stored barcode value. `/job-by-barcode` remains available for future clients but is not required by the installed app.
+
+## Staff registration endpoints
+
+- `GET /api/staff/parcel-customers?q=...`: admin/staff only, minimum two search characters, returns up to 20 active customer matches.
+- `POST /api/staff/register-parcel`: admin/staff only. Validates recipient, Australian phone/email, booking-style address and date, generates a new unique DO, and creates a pending delivery owned by the selected customer. The original barcode and its first warehouse scan are saved in the same transaction. An advisory lock prevents two registration requests creating duplicate jobs for the same canonical printed label. A duplicate returns 409 and never changes the existing record.
+- `GET /api/job-by-barcode` returns explicit code `BARCODE_NOT_FOUND` with `source: database` when no stored label exists. The new registration interface opens only for this response.
+
+No schema changes are needed. Existing staff-app builds can still scan known labels through the compatibility endpoints, but the registration form requires this updated mobile JavaScript. Test the new job through route planning and driver scanning before distributing it widely.

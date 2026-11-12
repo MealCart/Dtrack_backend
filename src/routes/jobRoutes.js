@@ -9,6 +9,10 @@ const dbJobController = require('../controllers/dbJobController');
 // All routes require authentication
 router.use(authenticate);
 
+const staffParcels = require('../controllers/staffParcelController');
+router.get('/staff/parcel-customers', staffParcels.customers);
+router.post('/staff/register-parcel', staffParcels.register);
+
 // ===== DATABASE JOBS =====
 router.get('/db-jobs', jobController.getJobs);
 router.get('/db-jobs/:id', jobController.getJob);

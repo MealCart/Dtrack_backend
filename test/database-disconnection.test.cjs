@@ -5,9 +5,10 @@ function harness(query,extra={}){
  function load(file){file=path.resolve(file);if(cache[file])return cache[file];const module={exports:{}};cache[file]=module.exports;
  const localRequire=n=>{
  if(extra.modules && n in extra.modules)return extra.modules[n];
+ if(n==='crypto')return require('node:crypto');
  if(n.includes('config/database'))return{pool};
  if(n==='pdf-lib')return require('pdf-lib');
- if(n.includes('australianPhone'))return{normalizePhoneFields(){}};
+ if(n.includes('australianPhone'))return{...require('../src/utils/australianPhone'),normalizePhoneFields(){}};
  if(n.includes('utils/helpers'))return{generateBarcodes:(ref,count)=>Array.from({length:count},(_,i)=>`${ref}-${i+1}`)};
  if(n.includes('bookingType'))return require('../src/utils/bookingType');
  if(n.startsWith('.'))return load(path.resolve(path.dirname(file),n+'.js'));
