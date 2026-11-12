@@ -29,6 +29,7 @@ router.get('/detrack-collections', jobController.getDetrackCollections);
 // ===== DETRACK API JOBS =====
 router.get('/jobs', jobController.getDetrackJobs);
 router.get('/jobs/:id', jobController.getDetrackJob);
+router.get('/job-by-barcode', jobController.getJobByBarcode);
 router.get('/job-by-donumber', jobController.getJobByDoNumber);
 
 // ===== DOWNLOAD / GENERATE POD =====

@@ -37,3 +37,7 @@ After deployment, test as a customer and as admin: search a known delivery and c
 Automated checks cover database-only routing, scoping, guarded writes, missing scans, retained evidence, PDF image/signature pages, blocked media hosts and no provider fallback. Live Render credentials and a real driver-media file were not used in automated tests.
 
 Validation commands: `npm ci`, then `npm test`. The lockfile includes the existing date-fns and date-fns-tz dependencies and matches package.json.
+
+## Existing Zebra app compatibility
+
+The existing installed staff app can continue using `/job-by-donumber` and `/scan-box` without any mobile rebuild. Lookup first checks the exact owned DO number, then stored printed barcode prefixes. Optional leading # characters and trailing scanner whitespace are matched safely. Ambiguous matches fail with HTTP 409, and no external lookup or import occurs. Scans are recorded using the original stored barcode value. `/job-by-barcode` remains available for future clients but is not required by the installed app.
