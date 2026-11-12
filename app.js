@@ -62,10 +62,8 @@ app.get('/api/health', (req, res) => {
 app.get('/api/test', (req, res) => {
   res.json({
     status: '✅ Server is running',
-    message: 'Detrack API integration is working',
+    message: 'Mealcart database API is working',
     timestamp: new Date().toISOString(),
-    apiKeyLoaded: !!process.env.DETRACK_API_KEY,
-    apiKeyPreview: process.env.DETRACK_API_KEY ? process.env.DETRACK_API_KEY.substring(0, 10) + '...' : 'Not loaded'
   });
 });
 
@@ -73,7 +71,7 @@ app.get('/api/test', (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     status: '✅ Server is running',
-    message: 'Detrack API integration with PostgreSQL and Authentication is ready',
+    message: 'Mealcart PostgreSQL API and Authentication are ready',
     endpoints: {
       auth: {
         'POST /api/auth/register': 'Register a new customer (with group)',
@@ -106,11 +104,11 @@ app.get('/', (req, res) => {
         'POST /api/upload-label': 'Upload a label manually',
         'DELETE /api/labels/:id': 'Delete a label',
       },
-      detrack: {
-        'GET /api/jobs': 'Get jobs from Detrack API',
-        'GET /api/jobs/:id': 'Get single job from Detrack API',
-        'GET /api/job-by-donumber': 'Get job by DO number from Detrack',
-        'GET /api/groups': 'Get groups from Detrack (paginated)',
+      databaseBookings: {
+        'GET /api/jobs': 'Get jobs from database',
+        'GET /api/jobs/:id': 'Get single job from database',
+        'GET /api/job-by-donumber': 'Get job by DO number from database',
+        'GET /api/groups': 'Retired external group endpoint',
         'GET /api/groups/search-all': 'Search all groups (all pages)',
       },
       scanning: {
@@ -122,7 +120,7 @@ app.get('/', (req, res) => {
         'GET /api/dashboard-stats': 'Get dashboard statistics',
       },
       vehicles: {
-        'GET /api/vehicles': 'Get vehicles from Detrack API',
+        'GET /api/vehicles': 'Retired external vehicle endpoint',
       },
       postcode: {
         'POST /api/validate-postcode': 'Validate a single post code',

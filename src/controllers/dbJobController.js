@@ -1,6 +1,14 @@
 // src/controllers/dbJobController.js
 const { pool } = require('../config/database');
 
+// Driver uploads are hosted by the route backend, not the customer portal.
+function completionMediaUrl(photo) {
+  const value=typeof photo==='string'?photo:photo?.url||photo?.photo_url||photo?.file_url||photo?.uri;
+  if(!value)return null;
+  if(/^https?:\/\//i.test(value))return value;
+  return new URL(value,process.env.DRIVER_MEDIA_BASE_URL||'https://mealcart-router-backend.onrender.com').href;
+}
+
 // ===== MAP DB ROW → FRONTEND Booking SHAPE =====
 // Matches what mapDetrackJobToBooking() produces, minus live-only fields.
 function mapDbJobToBooking(row) {
@@ -17,13 +25,6 @@ function mapDbJobToBooking(row) {
   let barcodes = parseJson(row.barcodes, []);
   const scans = parseJson(row.scans, []);
 
-  // Fallback barcode generation (matches helpers.generateBarcodes — no zero-pad)
-  if (!barcodes || barcodes.length === 0) {
-    barcodes = [];
-    for (let i = 0; i < boxCount; i++) {
-      barcodes.push(`${doNumber}-${i + 1}`);
-    }
-  }
 
   return {
     // Identity
@@ -81,11 +82,11 @@ function mapDbJobToBooking(row) {
 
     // Fields not stored in jobs remain empty; details never query Detrack.
     assignedVehicleId: null,
-    driver: '',
+    driver: row.completion_driver_id || '',
     runNumber: '',
     liveEta: null,
     etaTime: null,
-    podTime: '',
+    podTime: row.completion_recorded_at || '',
     podFileUrl: null,
     trackingLink: '',
     verificationCode: '',
@@ -93,7 +94,7 @@ function mapDbJobToBooking(row) {
     trackingStatus: '',
     trackingStatusCode: '',
     milestones: [],
-    photos: {},
+    photos: Object.fromEntries((Array.isArray(parseJson(row.completion_photos, [])) ? parseJson(row.completion_photos, []) : []).slice(0,10).map((photo,i)=>[`photo_${i+1}`, completionMediaUrl(photo)]).filter(([,url])=>url)),
     cost: 0,
     deliveredDate: undefined,
   };
@@ -184,7 +185,7 @@ exports.getDbJobs = async (req, res) => {
     const { date, page = 1, limit = 100 } = req.query;
     const userId = req.user.id;
     const userRole = req.user.role;
-    const userGroupId = req.user.group_id;
+    if (!['admin','staff','customer'].includes(userRole)) return res.status(403).json({success:false,error:'Access denied'});
 
     const pageNum = Math.max(1, parseInt(page) || 1);
     const limitNum = Math.max(1, parseInt(limit) || 100);
@@ -199,13 +200,8 @@ exports.getDbJobs = async (req, res) => {
     }
 
     if (userRole === 'customer') {
-      if (userGroupId) {
-        params.push(userGroupId, userId);
-        conditions.push(`(group_id = $${params.length - 1} OR user_id = $${params.length})`);
-      } else {
-        params.push(userId);
-        conditions.push(`user_id = $${params.length}`);
-      }
+      params.push(userId);
+      conditions.push(`user_id = $${params.length}`);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -242,7 +238,7 @@ exports.getDbJobs = async (req, res) => {
         totalPages,
         date: date || null,
         role: userRole,
-        groupId: userRole === 'customer' ? userGroupId : null,
+        groupId: null,
       },
       total_count: total,
       currentPage: pageNum,
@@ -264,7 +260,7 @@ exports.getDbCollections = async (req, res) => {
     const { date, page = 1, limit = 100 } = req.query;
     const userId = req.user.id;
     const userRole = req.user.role;
-    const userGroupId = req.user.group_id;
+    if (!['admin','staff','customer'].includes(userRole)) return res.status(403).json({success:false,error:'Access denied'});
 
     const pageNum = Math.max(1, parseInt(page) || 1);
     const limitNum = Math.max(1, parseInt(limit) || 100);
@@ -279,13 +275,8 @@ exports.getDbCollections = async (req, res) => {
     }
 
     if (userRole === 'customer') {
-      if (userGroupId) {
-        params.push(userGroupId, userId);
-        conditions.push(`(group_id = $${params.length - 1} OR user_id = $${params.length})`);
-      } else {
-        params.push(userId);
-        conditions.push(`user_id = $${params.length}`);
-      }
+      params.push(userId);
+      conditions.push(`user_id = $${params.length}`);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

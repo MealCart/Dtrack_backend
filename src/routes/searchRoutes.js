@@ -4,7 +4,7 @@ const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const searchController = require('../controllers/searchController');
 
-// Search jobs by DO number - searches Detrack directly
+// Search jobs by DO number - searches the Mealcart database only
 router.get('/search/job', authenticate, searchController.searchJobByDoNumber);
 
 // Search jobs by multiple criteria

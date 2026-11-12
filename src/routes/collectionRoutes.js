@@ -11,11 +11,11 @@ router.use(authenticate);
 
 // Get collections
 router.get('/collections', collectionController.getCollections);
+router.get('/collections/recent', collectionController.getRecentCollections);
+router.get('/collections/today', collectionController.getTodayCollections);
 router.get('/collections/:id', collectionController.getCollection);
 router.get('/collection-by-donumber', collectionController.getCollectionByDoNumber);
 router.get('/collections/group/:groupId', collectionController.getCollectionsByGroup);
-router.get('/collections/recent', collectionController.getRecentCollections);
-router.get('/collections/today', collectionController.getTodayCollections);
 
 // Create collections
 router.post('/create-collection', collectionController.createCollection);

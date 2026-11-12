@@ -1,16 +1,1 @@
-// src/controllers/vehicleController.js
-const DetrackService = require('../services/detrackService');
-
-// ===== VEHICLE ENDPOINTS =====
-exports.getVehicles = async (req, res) => {
-  try {
-    const response = await DetrackService.getVehicles();
-    return res.json(response);
-  } catch (error) {
-    console.error('Vehicles fetch error:', error.message);
-    return res.status(500).json({
-      error: 'Failed to fetch vehicles',
-      details: error.message
-    });
-  }
-};
+exports.getVehicles = (req,res) => res.status(410).json({success:false,error:'External vehicle lookup has been retired. Manage drivers and routes in the Mealcart route planner.'});
