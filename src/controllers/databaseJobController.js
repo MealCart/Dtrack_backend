@@ -107,7 +107,16 @@ function scan(bulk){return handler(async(req,res)=>{
 });}
 exports.scanBox=scan(false);exports.bulkScan=scan(true);
 exports.generatePod=exports.downloadPod=handler(async(req,res)=>{
- const row=await find(req,req.params.doNumber);const pdf=await require('../services/databasePodService').generate(row);
+ const requested=req.query.type;
+ if(requested!==undefined&&!['delivery','collection'].includes(requested))throw httpError(400,'POD type must be delivery or collection');
+ let type=requested||'delivery',row;
+ try{row=await find(req,req.params.doNumber,type);}catch(error){
+  if(requested||error.status!==404)throw error;
+  type='collection';row=await find(req,req.params.doNumber,type);
+ }
+ const pod=require('../services/databasePodService');
+ const record=await pod.completionRecord(row,type,pool);
+ const pdf=await pod.generate(record);
  res.setHeader('Content-Type','application/pdf');res.setHeader('Content-Disposition',`attachment; filename="POD_${row.do_number.replace(/[^A-Za-z0-9._-]/g,'_')}.pdf"`);res.setHeader('Cache-Control','no-store');return res.send(pdf);
 });
 // Resolve the actual stored label, without guessing where a hyphenated DO number ends.

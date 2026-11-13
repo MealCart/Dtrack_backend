@@ -7,14 +7,14 @@ function harness(query,extra={}){
  if(extra.modules && n in extra.modules)return extra.modules[n];
  if(n==='crypto')return require('node:crypto');
  if(n.includes('config/database'))return{pool};
- if(n==='pdf-lib')return require('pdf-lib');
+ if(['pdf-lib','@pdf-lib/fontkit','fs','path'].includes(n))return require(n);
  if(n.includes('australianPhone'))return{...require('../src/utils/australianPhone'),normalizePhoneFields(){}};
  if(n.includes('utils/helpers'))return{generateBarcodes:(ref,count)=>Array.from({length:count},(_,i)=>`${ref}-${i+1}`)};
  if(n.includes('bookingType'))return require('../src/utils/bookingType');
  if(n.startsWith('.'))return load(path.resolve(path.dirname(file),n+'.js'));
  throw Error('Unexpected dependency '+n);
  };
- new Function('require','module','exports','console','process','fetch',fs.readFileSync(file,'utf8'))(localRequire,module,module.exports,{error(){},log(){},warn(){}},{env:extra.env||{}},extra.fetch);
+ new Function('require','module','exports','console','process','fetch','__dirname',fs.readFileSync(file,'utf8'))(localRequire,module,module.exports,{error(){},log(){},warn(){}},{env:extra.env||{}},extra.fetch,path.dirname(file));
  cache[file]=module.exports;return module.exports;}
  return{load:n=>load(path.join(ROOT,n)),calls};
 }
