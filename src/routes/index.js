@@ -1,6 +1,8 @@
 // src/routes/index.js
 const express = require('express');
 const router = express.Router();
+// Server-to-server POD capability has its own mandatory signature verification.
+router.use('/internal',require('./trackingPodRoutes'));
 
 const authRoutes = require('./authRoutes');
 const adminRoutes = require('./adminRoutes');
